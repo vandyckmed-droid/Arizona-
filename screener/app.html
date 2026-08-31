@@ -155,6 +155,21 @@
   .watch-btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
   .watch-btn svg{width:16px;height:16px}
 
+  .bet{margin-top:14px;padding:11px 13px;background:var(--sunk);border-radius:9px;
+    font-size:13px;line-height:1.5;color:var(--ink)}
+  .bet b{display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);font-weight:500;margin-bottom:4px}
+
+  .comp{display:grid;gap:5px}
+  .comp .r{display:grid;grid-template-columns:1fr 42px;gap:8px;align-items:center;font-size:12px}
+  .comp .bar{position:relative;height:17px;background:var(--sunk);border-radius:3px;overflow:hidden}
+  .comp .fill{position:absolute;inset:0 auto 0 0;background:var(--accent);opacity:.28}
+  .comp .t{position:relative;padding:0 6px;line-height:17px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .comp .w{font-family:var(--mono);font-size:11px;color:var(--mid);text-align:right}
+  .comp-cols{display:grid;gap:14px}
+  @media (min-width:560px){.comp-cols{grid-template-columns:1fr 1fr}}
+
   figure{margin:18px 0 0}
   figcaption{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
     font-weight:500;margin-bottom:8px}
@@ -224,7 +239,7 @@
     <section id="view-rank" role="tabpanel" aria-labelledby="t-rank">
       <div class="config" id="config"></div>
       <div class="controls">
-        <input type="search" id="q" placeholder="Search ticker, name or exposure" autocomplete="off" aria-label="Search">
+        <input type="search" id="q" placeholder="Search ticker, name, bet or group" autocomplete="off" aria-label="Search">
         <div class="chips" id="chips"></div>
       </div>
       <ol id="list"></ol>
@@ -340,15 +355,27 @@ $('#asof').innerHTML = 'Through <b>' + esc(M.last_session) + '</b> &middot; '
     $('#tally').appendChild(d);
   });
 function paintCaveat(){
-  /* Only vol-adjusted mode has the collapsing-denominator problem. In raw-return
-     mode the same four names sit mid-pack, so the warning would be false. */
+  /* Only the vol-adjusted measure has the collapsing-denominator problem, and
+     which instruments it hits depends on the universe -- so find them rather
+     than naming them in the source. Anything whose 12-1 realized vol rounds to
+     a couple of basis points a day gets an enormous return/vol score without
+     having produced an interesting return. */
   var el = $('#caveat');
   if (measure !== 'zv'){ el.hidden = true; return; }
+  var flagged = RANKED.slice(0, 8).filter(function(r){ return r.m['12'].vol < 0.001; });
+  if (!flagged.length){ el.hidden = true; return; }
   el.hidden = false;
-  el.innerHTML = '<b>Read the top four with care.</b> SGOV, BIL, SHV and FLOT lead on '
-    + 'realized vol near 0.01%/day, not on return &mdash; <span class="num">return &divide; vol</span> '
-    + 'explodes when the denominator collapses. Switch the measure to <b>raw return</b> and they '
-    + 'fall to the middle of the table, which is where the return alone puts them.';
+  var names = flagged.map(function(r){ return r.ticker; });
+  var list = names.length === 1 ? names[0]
+    : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  el.innerHTML = '<b>Read ' + (names.length === 1 ? 'the top row' : 'the top ' + names.length
+      + ' rows') + ' with care.</b> ' + list + ' lead' + (names.length === 1 ? 's' : '')
+    + ' on realized vol near 0.01%/day, not on return &mdash; '
+    + '<span class="num">return &divide; vol</span> explodes when the denominator collapses. '
+    + 'Switch the measure to <b>raw return</b> and '
+    + (names.length === 1 ? 'it falls' : 'they fall')
+    + ' back to where the return alone puts '
+    + (names.length === 1 ? 'it' : 'them') + '.';
 }
 
 /* ---------- ranking config control ---------- */
@@ -449,7 +476,9 @@ function renderList(){
       && (cat === 'All' || r.category === cat)
       && (!q || r.ticker.toLowerCase().indexOf(q) > -1
              || r.name.toLowerCase().indexOf(q) > -1
-             || r.exposure.toLowerCase().indexOf(q) > -1);
+             || r.group.toLowerCase().indexOf(q) > -1
+             || r.bet.toLowerCase().indexOf(q) > -1
+             || r.legal_name.toLowerCase().indexOf(q) > -1);
   });
   $('#list').innerHTML = rows.length ? rows.map(listRow).join('')
     : '<div class="empty">' + (onlyWatch && !WATCH.size
@@ -470,7 +499,7 @@ function listRow(r){
         + '<span class="tk">' + r.ticker
           + (r.corr_ok ? '' : '<span class="short" title="short history"></span>') + '</span>'
         + '<span class="nm">' + esc(r.name) + '</span>'
-        + '<span class="exp">' + esc(r.category) + ' &middot; ' + esc(r.exposure) + '</span>'
+        + '<span class="exp">' + esc(r.category) + ' &middot; ' + esc(r.group) + '</span>'
       + '</span>'
       + '<span class="nums">'
         + '<span class="blend ' + tone(score(r)) + '">' + sgn(score(r)) + '</span>'
@@ -547,12 +576,12 @@ function tickerView(r){
     + '<div class="tv-head"><div class="tv-title">'
       + '<div class="tv-tk">' + r.ticker + '</div>'
       + '<div class="tv-nm">' + esc(r.name) + '</div>'
-      + '<div class="tv-meta">' + esc(r.category) + ' &middot; ' + esc(r.exposure)
-        + ' &middot; ' + esc(r.structure) + '</div>'
+      + '<div class="tv-meta">' + esc(r.group) + ' &middot; ' + esc(r.structure) + '</div>'
     + '</div><div class="tv-score">'
       + '<div class="tv-blend ' + tone(score(r)) + '">' + sgn(score(r)) + '</div>'
       + '<div class="tv-rank">rank ' + RANK[r.ticker] + ' / ' + M.ranked + '</div>'
     + '</div></div>'
+    + '<div class="bet"><b>Why it is in the universe</b>' + esc(r.bet) + '</div>'
     + '<button class="watch-btn" id="watch" aria-pressed="' + on + '"'
       + ' style="--fill:' + (on ? 'currentColor' : 'none') + '">' + STAR
       + '<span id="watch-text">' + (on ? 'On watchlist' : 'Add to watchlist') + '</span></button>'
@@ -584,7 +613,38 @@ function tickerView(r){
       + kv('blended score', sgn(score(r)), tone(score(r)))
       + kv('sessions', r.sessions)
     + '</div>'
+    + '<div class="note">Listed by FMP as ' + esc(r.legal_name) + '.</div>'
+    + composition(r)
     + peers + grp;
+}
+
+function compBlock(title, rows){
+  if (!rows.length) return '';
+  var max = rows[0].weight;
+  return '<div><div class="lbl" style="margin-top:0">' + title + '</div><div class="comp">'
+    + rows.map(function(x){
+        return '<div class="r"><div class="bar">'
+          + '<div class="fill" style="width:' + (100 * x.weight / max).toFixed(1) + '%"></div>'
+          + '<div class="t">' + esc(x.label) + '</div></div>'
+          + '<div class="w">' + x.weight.toFixed(1) + '%</div></div>';
+      }).join('')
+    + '</div></div>';
+}
+
+function composition(r){
+  if (!r.sectors.length && !r.countries.length){
+    return '<div class="lbl">Composition</div><div class="note" style="margin-top:0">'
+      + 'FMP publishes no look-through for this product &mdash; it holds '
+      + (r.structure === 'physical' ? 'metal directly'
+         : r.structure === 'futures' ? 'futures and collateral' : 'no listed equities')
+      + ', so there is nothing to break down.</div>';
+  }
+  return '<div class="lbl">Composition <span style="text-transform:none;letter-spacing:0">'
+    + '&mdash; sector and country weights, per FMP</span></div>'
+    + '<div class="comp-cols">'
+    + compBlock('By sector', r.sectors)
+    + compBlock('By country', r.countries)
+    + '</div>';
 }
 
 $('#ticker').addEventListener('click', function(e){

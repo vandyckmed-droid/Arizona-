@@ -1,6 +1,7 @@
 # Cross-asset ETF / ETP momentum screener
 
-A phone-first ranking sheet for a curated cross-asset ETF/ETP universe, plus a
+A phone-first ranking sheet for a deliberately compact cross-asset ETF/ETP
+universe — 81 instruments, one per distinct economic bet — plus a
 long-horizon correlation map that shows which of those instruments are really
 the same bet.
 
@@ -47,6 +48,23 @@ it means the numbers moved. Freshness is reported by `prices_fetched_at` and
 
 ## Method
 
+**Composition.** FMP's top-holdings endpoints (`etf/holdings`,
+`etf/asset-exposure`) are **restricted on this API key** and return
+"Restricted Endpoint". Sector and country weightings are available, and answer
+most of the same question: EEM's page shows 26.8% Taiwan, 20.6% Korea and 42.3%
+technology, which tells you it is largely a semiconductor bet. 56 rows carry
+sector weights and 70 carry country weights; the 10 that carry neither are the
+metals, futures and crypto products, where there is genuinely nothing to look
+through to.
+
+Sector weights are attached **only for equity funds**, because FMP returns
+confident nonsense elsewhere — DBA, an agriculture futures fund, comes back
+16.8% Healthcare; HYG, a broad high-yield bond fund, comes back 99.6%
+Utilities. Country weights survive on bond funds, where they are informative
+(EMB, EMLC and BNDX all break down sensibly). Placeholder buckets
+("Cash & Others", "Other") and impossible weights are dropped — FMP reports
+AMLP as 109.31% United States.
+
 **Prices.** FMP `stable/historical-price-eod/dividend-adjusted` — a total-return
 series, so bond and dividend ETFs are not penalised for their distributions.
 About 3.2 calendar years are requested per ticker. Nothing is imputed and
@@ -55,19 +73,43 @@ series whose last price is older than the reference calendar's last session is
 excluded outright rather than carried forward. SPY's dates are the reference
 trading calendar. Sessions dated today are not completed sessions and are cut.
 
-**Universe.** 286 hand-picked instruments (cap: 300), spanning broad U.S.
-equity, size and style, sectors, industries and subindustries, international and
-regional equity, themes, the Treasury duration ladder, IG and high-yield credit,
-inflation-linked and international/EM bonds, broad commodity baskets, precious
-metals, energy, industrial metals, agriculture, and spot bitcoin and ether ETPs.
+**Universe.** 81 instruments, hard-capped at 100, built around **distinct
+economic bets rather than coverage**. One canonical fund per exposure: SPY/VOO/
+IVV/VTI are one bet, not four. Two funds stay only when the constructions are
+genuinely different — cap-weight beside equal weight (SPY/RSP), a sector beside
+a narrower industry inside it (XLE/XOP), spot metal beside the miners
+(GLD/GDX).
+
+Every row states the bet it exists to express, in `universe.py` and on the
+instrument's page. The test is simple: if the reason does not survive being
+written down, the row does not belong. Rows also carry a `group` (the design
+bucket), a short display `name`, and a coarse `structure` tag.
+
+| group | n |
+|---|---|
+| U.S. broad / style / factors | 11 |
+| U.S. sectors | 11 |
+| Distinct industries and themes | 18 |
+| International, regions, countries | 15 |
+| Rates, bonds, credit | 13 |
+| Commodities | 8 |
+| Other macro bets | 3 |
+| Crypto | 2 |
+
 Leveraged, inverse, buffered, covered-call and volatility products are left out
-by judgment when writing the list, not by a rules engine. Product structure is
-not a filter — trusts, ETNs and partnerships are in where they carry a useful
-exposure — but each row records a coarse `structure` tag (`fund`, `physical`,
-`futures`, `etn`, `equity`) that nothing keys off yet.
+by judgment when writing the list, not by a rules engine. Structure is not a
+filter — trusts and partnerships are in where they carry a distinct exposure.
 
 Two mechanical filters run in `build.py`: drop anything stale in FMP, and drop
-anything whose median dollar volume over the last 60 sessions is under $1M.
+anything whose median dollar volume over the last 60 sessions is under $1M. On
+the current universe neither fires — all 81 are current and liquid.
+
+**Correlation is a cleanup pass on this list, not the way it was designed.** It
+tells you two funds moved together over one particular three years; it cannot
+tell you they are the same bet. It removed exactly one name: Russell 1000 Growth
+(IWF), which correlated 0.973 with QQQ on a near-identical sector profile —
+55% vs 59% technology — making it the same bet with a different listing venue.
+Growth is now expressed by QQQ, value by IWD, breadth by RSP.
 
 **Ranking eligibility** is 253 completed sessions — 252 for the 12–1 lookback
 plus the one extra observation the indexing needs. Newer ETPs qualify as soon as
@@ -159,19 +201,26 @@ was dropped rather than re-stepped.
 
 ## What the current run produced
 
-286 in the universe → **270 ranked** → **259 with the full 756-session history**.
-Sixteen were dropped: five stale in FMP, eleven under the liquidity floor.
+**81 in the universe → 81 ranked → 79 with the full 756-session history.**
+Nothing was dropped for staleness or liquidity. The two without full history are
+IBIT and ETHA, the January-2024 spot crypto ETFs.
 
-Ranked mix: 88 U.S. equity, 77 international equity, 39 credit, 30 commodity,
-23 rates, 13 crypto.
+Display mix: 37 U.S. equity, 20 international equity, 8 credit, 8 commodity,
+5 rates, 1 macro, 2 crypto.
 
-**45 groups at ρ ≥ 0.90 and 110 near-duplicate pairs.** The groups reproduce the
-obvious structure without being told any of it — gold (GLD/IAU/GLDM/SGOL/BAR,
-avg ρ 0.999), silver (SLV/SIVR, 1.000), REITs (VNQ/SCHH/XLRE, 0.991), banks
-(KBE/KRE, 0.993), utilities (VPU/XLU, 0.997), long Treasuries (TLT/VGLT/SPTL/
-EDV/ZROZ/TLH + BLV + LTPZ, 0.970), high yield (HYG/JNK/USHY/SHYG/SJNK/ANGL/FALN,
-0.960), oil (USO/BNO/DBO/DBC/GSG/PDBC/DBE/COMT, 0.935), EM (EEM/IEMG/VWO/SCHE/
-AAXJ, 0.972).
+**Zero near-duplicate pairs at ρ ≥ 0.98**, down from 110 in the 286-name
+version — the issuer duplication is gone. Seven groups remain at ρ ≥ 0.90, and
+each is a real economic overlap rather than a wrapper artifact:
+
+| group | avg ρ | why both stay |
+|---|---|---|
+| IEF / LQD / MBB / TLT | 0.914 | one duration factor dominated 2023–26; credit and convexity separate in other regimes |
+| IJH / IWD / IWM / RSP | 0.922 | the whole "not mega-cap tech" complex |
+| QQQ / SMH / XLK | 0.932 | concentration, industry and sector views of the same names |
+| QUAL / SPY | 0.968 | quality screened out to near-market beta |
+| KWEB / MCHI | 0.949 | KWEB is regulatory risk, MCHI is broad China |
+| SCZ / VGK | 0.915 | SCZ is ~40% Europe by weight |
+| XLE / XOP | 0.930 | integrated majors vs equal-weight producers |
 
 ## Known limitations
 
@@ -193,16 +242,29 @@ AAXJ, 0.972).
   ETNs JO and NIB return a single bar. There were no interior gaps anywhere —
   every series aligns exactly to the SPY calendar from its first date — so the
   only integrity problem found was truncation at the end.
-- **Crypto correlation coverage is thin.** Only GBTC and ETHE clear 756 sessions
-  (they traded as OTC trusts before converting). The eleven 2024-vintage spot
-  ETPs rank but sit outside the correlation matrix, so the obvious IBIT/FBTC/
-  BITB/ARKB near-duplication is invisible to it. GBTC/ETHE correlate at 0.79 and
-  form no group at ρ ≥ 0.90, which is correct — bitcoin and ether are related
-  but not the same bet.
+- **Crypto is invisible to the correlation matrix.** IBIT and ETHA are the
+  canonical spot products but launched in 2024, so neither clears 756 sessions.
+  The legacy trusts GBTC and ETHE do have the history, at much higher fees.
+  Canonical-instrument won over correlation coverage here; swapping them is a
+  one-line change if you would rather see crypto in the redundancy map.
 - **Commodity-producer equity is filed as equity.** GDX, COPX, URA, TAN and
   similar are categorised as International Equity, not Commodity. The
   correlation matrix agrees (GDX–GLD is 0.83, not 0.99), but the label may read
   oddly on a commodity screen.
+- **UNG is path-dependent by construction.** Front-month natural gas futures
+  roll at a persistent loss, so part of what the screen measures for UNG is roll
+  decay rather than the gas price. The brief excludes highly path-dependent
+  products; I kept it because there is no liquid alternative and natural gas is
+  too distinct a macro bet to omit. Worth an explicit decision.
+- **QUAL correlates 0.968 with SPY.** It survived the cleanup because a quality
+  screen is a genuinely different construction, but on this evidence it is the
+  weakest row in the universe and the first thing to cut if the count needs to
+  come down.
+- **The value/growth axis is asymmetric.** Cutting IWF leaves a named value fund
+  (IWD) with no named growth counterpart; QQQ carries the growth leg.
+- **PFF loses its sector breakdown** to the equity-only gate on sector weights.
+  It holds preferred stock, so sectors would be meaningful, but a per-fund
+  exception was not worth the complexity.
 - Category assignment, the $1M liquidity floor, and the 0.90 / 0.98 correlation
   thresholds are all judgment calls, not optimized values.
 
