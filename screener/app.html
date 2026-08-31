@@ -8,7 +8,7 @@
     --ink:#10161c; --mid:#48575f; --muted:#77878f; --line:#dbe3e6;
     --pos:#0f766e; --neg:#b4451f;
     --accent:#2a78d6; --accent-soft:#e2edfa;
-    --band12:#e4ebee; --band6:#d3dee3;
+    --band12:#e4ebee; --band9:#dbe5e9; --band6:#d3dee3;
     --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
     --disp:"Archivo","IBM Plex Sans",-apple-system,sans-serif;
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -19,7 +19,7 @@
       --ink:#e7edef; --mid:#a9b7bd; --muted:#7f8f97; --line:#252f34;
       --pos:#4bbfa8; --neg:#e08159;
       --accent:#3987e5; --accent-soft:#1b2f45;
-      --band12:#1f292e; --band6:#293539;
+      --band12:#1f292e; --band9:#242f34; --band6:#293539;
     }
   }
   :root[data-theme="dark"]{
@@ -27,7 +27,7 @@
     --ink:#e7edef; --mid:#a9b7bd; --muted:#7f8f97; --line:#252f34;
     --pos:#4bbfa8; --neg:#e08159;
     --accent:#3987e5; --accent-soft:#1b2f45;
-    --band12:#1f292e; --band6:#293539;
+    --band12:#1f292e; --band9:#242f34; --band6:#293539;
   }
 
   *{box-sizing:border-box}
@@ -66,6 +66,33 @@
     box-shadow:0 1px 2px rgba(0,0,0,.09)}
   .tab .badge{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-left:4px}
   .tab[aria-selected="true"] .badge{color:var(--accent)}
+
+  /* ---- ranking config ---- */
+  .config{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;
+    padding:12px 0 2px;border-bottom:1px solid var(--line)}
+  .cfg{display:flex;align-items:center;gap:7px}
+  .cfg > span{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);font-weight:500}
+  .seg{display:flex;background:var(--sunk);border-radius:7px;padding:2px;gap:2px}
+  .seg button{border:0;background:none;color:var(--mid);border-radius:5px;
+    padding:5px 9px;font-size:12px;cursor:pointer;white-space:nowrap}
+  .seg button[aria-pressed="true"]{background:var(--card);color:var(--ink);font-weight:600;
+    box-shadow:0 1px 2px rgba(0,0,0,.09)}
+  .seg.win button[aria-pressed="true"]{background:var(--accent);color:#fff}
+  .seg.win button{font-family:var(--mono);font-size:11.5px}
+  .cfg-note{flex-basis:100%;font-size:11px;color:var(--muted);line-height:1.5;padding-bottom:10px}
+
+  /* ---- window table (ticker view) ---- */
+  .wt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table.wt{border-collapse:collapse;width:100%;min-width:290px;font-size:12.5px}
+  table.wt th{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
+    font-weight:500;text-align:right;padding:0 0 5px 10px;white-space:nowrap}
+  table.wt th:first-child{text-align:left;padding-left:0}
+  table.wt td{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;
+    padding:6px 0 6px 10px;border-top:1px solid var(--line);white-space:nowrap}
+  table.wt td:first-child{text-align:left;padding-left:0;font-family:var(--sans);color:var(--mid)}
+  table.wt tr.off td{opacity:.42}
+  table.wt tr.on td:first-child{color:var(--ink);font-weight:600}
 
   /* ---- filters ---- */
   .controls{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 8px}
@@ -182,7 +209,7 @@
 <div class="wrap">
   <div id="main">
     <header>
-      <div class="eyebrow">Vol-adjusted 12&ndash;1 / 6&ndash;1 momentum</div>
+      <div class="eyebrow" id="eyebrow"></div>
       <h1>Cross-Asset Momentum</h1>
       <div class="asof" id="asof"></div>
       <div class="tally" id="tally"></div>
@@ -195,6 +222,7 @@
     </div>
 
     <section id="view-rank" role="tabpanel" aria-labelledby="t-rank">
+      <div class="config" id="config"></div>
       <div class="controls">
         <input type="search" id="q" placeholder="Search ticker, name or exposure" autocomplete="off" aria-label="Search">
         <div class="chips" id="chips"></div>
@@ -233,6 +261,52 @@ function shortDate(iso){
 var STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.6 6 .8-4.4 4.2 1.1 6.1L12 17.3 6.7 20.2l1.1-6.1L3.4 9.9l6-.8z" '
   + 'fill="var(--fill,none)" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
 
+/* ---------- ranking configuration ----------
+   measure: 'zv' = z of (return / realized vol), 'zr' = z of the raw return.
+   wins:    which of the 12-1 / 9-1 / 6-1 windows count, at equal weight.
+
+   Both measures are z-scored per window in build.py, and only z-scores are ever
+   averaged here. That is what makes an equal-weighted blend actually equal: a
+   raw 12-1 return is mechanically larger than a raw 6-1 return, so averaging
+   the raw numbers would hand the longest window the loudest vote. With one
+   window selected the z-score is a monotone transform of the underlying value,
+   so the order is exactly the raw order. */
+var WINS = ['12', '9', '6'];
+var WLBL = {'12': '12&ndash;1', '9': '9&ndash;1', '6': '6&ndash;1'};
+var measure = M.default_measure, wins = M.default_windows.slice();
+try {
+  var saved = JSON.parse(localStorage.getItem('cam.config') || 'null');
+  if (saved && (saved.measure === 'zv' || saved.measure === 'zr')
+      && Array.isArray(saved.wins)){
+    var w = saved.wins.filter(function(x){ return WINS.indexOf(x) > -1; });
+    if (w.length){ measure = saved.measure; wins = w; }
+  }
+} catch (e) { /* unreadable storage just means the defaults stand */ }
+function saveConfig(){
+  try { localStorage.setItem('cam.config', JSON.stringify({measure: measure, wins: wins})); }
+  catch (e) {}
+}
+function orderedWins(){
+  return WINS.filter(function(w){ return wins.indexOf(w) > -1; });
+}
+function score(r){
+  var ws = orderedWins(), t = 0;
+  for (var i = 0; i < ws.length; i++) { t += r.m[ws[i]][measure]; }
+  return t / ws.length;
+}
+/* Ranks are a function of the current configuration, so they are recomputed
+   rather than read off the file. RANKED is the whole universe in current order;
+   RANK maps ticker -> its place in it. */
+var RANKED = [], RANK = {};
+function reRank(){
+  RANKED = ROWS.slice().sort(function(a, b){
+    var d = score(b) - score(a);
+    return d || (a.ticker < b.ticker ? -1 : 1);
+  });
+  RANK = {};
+  RANKED.forEach(function(r, i){ RANK[r.ticker] = i + 1; });
+}
+
 /* ---------- watchlist: per-viewer, private, never leaves the browser ---------- */
 var WATCH = (function(){
   try { return new Set(JSON.parse(localStorage.getItem('cam.watchlist') || '[]')); }
@@ -265,10 +339,66 @@ $('#asof').innerHTML = 'Through <b>' + esc(M.last_session) + '</b> &middot; '
     d.innerHTML = '<div class="v">' + p[1] + '</div><div class="k">' + p[0] + '</div>';
     $('#tally').appendChild(d);
   });
-$('#caveat').innerHTML = '<b>Read the top four with care.</b> SGOV, BIL, SHV and FLOT lead on '
-  + 'realized vol near 0.01%/day, not on return &mdash; <span class="num">return &divide; vol</span> '
-  + 'explodes when the denominator collapses. The formula is working as specified; the ordering '
-  + 'below them barely changes if they are dropped.';
+function paintCaveat(){
+  /* Only vol-adjusted mode has the collapsing-denominator problem. In raw-return
+     mode the same four names sit mid-pack, so the warning would be false. */
+  var el = $('#caveat');
+  if (measure !== 'zv'){ el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = '<b>Read the top four with care.</b> SGOV, BIL, SHV and FLOT lead on '
+    + 'realized vol near 0.01%/day, not on return &mdash; <span class="num">return &divide; vol</span> '
+    + 'explodes when the denominator collapses. Switch the measure to <b>raw return</b> and they '
+    + 'fall to the middle of the table, which is where the return alone puts them.';
+}
+
+/* ---------- ranking config control ---------- */
+$('#config').innerHTML =
+  '<div class="cfg"><span>Measure</span><div class="seg" id="seg-measure">'
+    + '<button data-m="zv">Vol-adjusted</button>'
+    + '<button data-m="zr">Raw return</button></div></div>'
+  + '<div class="cfg"><span>Windows</span><div class="seg win" id="seg-wins">'
+    + WINS.map(function(w){ return '<button data-w="' + w + '">' + WLBL[w] + '</button>'; }).join('')
+    + '</div></div>'
+  + '<div class="cfg-note" id="cfg-note"></div>';
+
+function paintConfig(){
+  Array.prototype.forEach.call(document.querySelectorAll('#seg-measure button'), function(b){
+    b.setAttribute('aria-pressed', String(b.dataset.m === measure)); });
+  Array.prototype.forEach.call(document.querySelectorAll('#seg-wins button'), function(b){
+    b.setAttribute('aria-pressed', String(wins.indexOf(b.dataset.w) > -1)); });
+  var ws = orderedWins();
+  var names = ws.map(function(w){ return WLBL[w]; });
+  $('#eyebrow').innerHTML = (measure === 'zv' ? 'Vol-adjusted ' : 'Raw-return ')
+    + names.join(' / ') + ' momentum';
+  var joined = names.length === 1 ? names[0]
+    : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  $('#cfg-note').innerHTML = ws.length === 1
+    ? 'Ranked on the ' + joined + ' ' + (measure === 'zv' ? 'volatility-adjusted score'
+        : 'raw return') + '. One window, so this is the plain ordering of that measure.'
+    : 'Ranked on ' + joined + ', equally weighted. Each window is z-scored across the '
+      + M.ranked + ' instruments before averaging, so the longer windows get no advantage '
+      + 'from their mechanically larger ' + (measure === 'zv' ? 'scores' : 'returns') + '.';
+}
+
+$('#seg-measure').addEventListener('click', function(e){
+  var b = e.target.closest('button'); if (!b || b.dataset.m === measure) return;
+  measure = b.dataset.m; saveConfig(); applyConfig();
+});
+$('#seg-wins').addEventListener('click', function(e){
+  var b = e.target.closest('button'); if (!b) return;
+  var w = b.dataset.w, i = wins.indexOf(w);
+  if (i > -1){
+    if (wins.length === 1) return;   // at least one window has to stay on
+    wins.splice(i, 1);
+  } else { wins.push(w); }
+  saveConfig(); applyConfig();
+});
+
+function applyConfig(){
+  reRank(); paintConfig(); paintCaveat(); renderList(); renderGroups();
+  var t = $('.tv-tk');
+  if (t && !$('#ticker').hidden) showTicker(t.textContent);
+}
 
 /* ---------- filters ---------- */
 var cat = 'All', onlyWatch = false, tabRank = true;
@@ -314,7 +444,7 @@ $('#t-group').addEventListener('click', function(){ tab(false); });
 /* ---------- ranking list ---------- */
 function renderList(){
   var q = $('#q').value.trim().toLowerCase();
-  var rows = ROWS.filter(function(r){
+  var rows = RANKED.filter(function(r){
     return (!onlyWatch || WATCH.has(r.ticker))
       && (cat === 'All' || r.category === cat)
       && (!q || r.ticker.toLowerCase().indexOf(q) > -1
@@ -329,9 +459,13 @@ function renderList(){
 
 function listRow(r){
   var on = WATCH.has(r.ticker);
+  var parts = orderedWins().map(function(w){
+    var z = r.m[w][measure];
+    return w + ' <span class="' + tone(z) + '">' + sgn(z) + '</span>';
+  }).join('&emsp;');
   return '<li class="row">'
     + '<button class="open" data-t="' + r.ticker + '">'
-      + '<span class="rank">' + r.rank + '</span>'
+      + '<span class="rank">' + RANK[r.ticker] + '</span>'
       + '<span class="id">'
         + '<span class="tk">' + r.ticker
           + (r.corr_ok ? '' : '<span class="short" title="short history"></span>') + '</span>'
@@ -339,9 +473,8 @@ function listRow(r){
         + '<span class="exp">' + esc(r.category) + ' &middot; ' + esc(r.exposure) + '</span>'
       + '</span>'
       + '<span class="nums">'
-        + '<span class="blend ' + tone(r.blend) + '">' + sgn(r.blend) + '</span>'
-        + '<span class="parts">12&ndash;1 <span class="' + tone(r.z12) + '">' + sgn(r.z12) + '</span>'
-        + '&emsp;6&ndash;1 <span class="' + tone(r.z6) + '">' + sgn(r.z6) + '</span></span>'
+        + '<span class="blend ' + tone(score(r)) + '">' + sgn(score(r)) + '</span>'
+        + '<span class="parts">' + parts + '</span>'
       + '</span>'
     + '</button>'
     + '<button class="star-btn" data-star="' + r.ticker + '" aria-pressed="' + on + '"'
@@ -417,8 +550,8 @@ function tickerView(r){
       + '<div class="tv-meta">' + esc(r.category) + ' &middot; ' + esc(r.exposure)
         + ' &middot; ' + esc(r.structure) + '</div>'
     + '</div><div class="tv-score">'
-      + '<div class="tv-blend ' + tone(r.blend) + '">' + sgn(r.blend) + '</div>'
-      + '<div class="tv-rank">rank ' + r.rank + ' / ' + M.ranked + '</div>'
+      + '<div class="tv-blend ' + tone(score(r)) + '">' + sgn(score(r)) + '</div>'
+      + '<div class="tv-rank">rank ' + RANK[r.ticker] + ' / ' + M.ranked + '</div>'
     + '</div></div>'
     + '<button class="watch-btn" id="watch" aria-pressed="' + on + '"'
       + ' style="--fill:' + (on ? 'currentColor' : 'none') + '">' + STAR
@@ -427,22 +560,28 @@ function tickerView(r){
       + '<figcaption>Price rebased to 100 at the 12&ndash;1 entry</figcaption>'
       + '<div class="chart" id="chart"></div>'
       + '<div class="legend">'
-        + '<span><i style="background:var(--band12)"></i>12&ndash;1 window</span>'
-        + '<span><i style="background:var(--band6)"></i>6&ndash;1 window</span>'
-        + '<span><i class="hatched" id="lg-skip"></i>last 21 sessions, skipped</span>'
+        + orderedWins().map(function(w){
+            return '<span><i style="background:var(--band' + w + ')"></i>'
+              + WLBL[w] + ' window</span>'; }).join('')
+        + '<span><i class="hatched" id="lg-skip"></i>last ' + M.lag + ' sessions, skipped</span>'
       + '</div>'
     + '</figure>'
-    + '<div class="lbl">Momentum inputs</div>'
-    + '<div class="grid">'
-      + kv('12&ndash;1 return', pct(r.ret12), tone(r.ret12))
-      + kv('6&ndash;1 return', pct(r.ret6), tone(r.ret6))
-      + kv('12&ndash;1 daily vol', (r.vol12*100).toFixed(2) + '%')
-      + kv('6&ndash;1 daily vol', (r.vol6*100).toFixed(2) + '%')
-      + kv('12&ndash;1 score', fx(r.score12))
-      + kv('6&ndash;1 score', fx(r.score6))
-      + kv('12&ndash;1 z-score', sgn(r.z12), tone(r.z12))
-      + kv('6&ndash;1 z-score', sgn(r.z6), tone(r.z6))
-      + kv('blended', sgn(r.blend), tone(r.blend))
+    + '<div class="lbl">Every window, not just the ranked ones</div>'
+    + '<div class="wt-wrap"><table class="wt">'
+      + '<thead><tr><th>window</th><th>return</th><th>daily vol</th><th>score</th>'
+        + '<th>z ' + (measure === 'zv' ? 'vol-adj' : 'raw') + '</th></tr></thead><tbody>'
+      + WINS.map(function(w){
+          var d = r.m[w], on = wins.indexOf(w) > -1, z = d[measure];
+          return '<tr class="' + (on ? 'on' : 'off') + '"><td>' + WLBL[w]
+            + (on ? '' : ' <span style="font-size:9px;letter-spacing:.06em">OFF</span>') + '</td>'
+            + '<td class="' + tone(d.ret) + '">' + pct(d.ret) + '</td>'
+            + '<td>' + (d.vol*100).toFixed(2) + '%</td>'
+            + '<td>' + fx(d.score) + '</td>'
+            + '<td class="' + tone(z) + '">' + sgn(z) + '</td></tr>';
+        }).join('')
+      + '</tbody></table></div>'
+    + '<div class="grid" style="margin-top:12px">'
+      + kv('blended score', sgn(score(r)), tone(score(r)))
       + kv('sessions', r.sessions)
     + '</div>'
     + peers + grp;
@@ -468,8 +607,8 @@ $('#ticker').addEventListener('click', function(e){
 function drawChart(r){
   var host = $('#chart'); if (!host) return;
   var s = S.data[r.ticker];
-  var W = host.clientWidth, H = 246;
-  var padL = 6, padR = 36, padT = 14, padB = 62;
+  var W = host.clientWidth, H = 264;
+  var padL = 6, padR = 36, padT = 14, padB = 80;
   var n = S.dates.length;
   var x = function(i){ return padL + (i / (n - 1)) * (W - padL - padR); };
 
@@ -507,13 +646,16 @@ function drawChart(r){
 
   var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" height="' + H + '" role="img" '
     + 'aria-label="' + r.ticker + ' price rebased to 100 at the 12 minus 1 window start. '
-    + '12 minus 1 return ' + (r.ret12*100).toFixed(1) + ' percent, 6 minus 1 return '
-    + (r.ret6*100).toFixed(1) + ' percent.">'
+    + orderedWins().map(function(w){
+        return w + ' minus 1 return ' + (r.m[w].ret*100).toFixed(1) + ' percent'; }).join(', ')
+    + '.">'
     + '<defs><pattern id="hatch" width="5" height="5" patternTransform="rotate(45)" '
       + 'patternUnits="userSpaceOnUse">'
       + '<line x1="0" y1="0" x2="0" y2="5" stroke="var(--hatch)" stroke-width="1.1"/></pattern></defs>'
-    + band(A.start12, A.end, 'var(--band12)')
-    + band(A.start6, A.end, 'var(--band6)')
+    /* every window ends at the same point, so the selected ones nest; painting
+       widest-first leaves each visible as its own tint */
+    + orderedWins().map(function(w){
+        return band(A['start' + w], A.end, 'var(--band' + w + ')'); }).join('')
     + band(A.end, A.last, 'url(#hatch)')
     /* the rebase line: everything above it is a gain over the 12-1 entry price */
     + '<line x1="' + padL + '" y1="' + y(1).toFixed(1) + '" x2="' + (W - padR)
@@ -527,7 +669,7 @@ function drawChart(r){
       + 'font-family="var(--mono)" fill="var(--muted)">' + (dLo*100).toFixed(0) + '</text>'
     + '<path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="2" '
       + 'stroke-linejoin="round" stroke-linecap="round"/>'
-    + dot(A.start12) + dot(A.start6) + dot(A.end)
+    + orderedWins().map(function(w){ return dot(A['start' + w]); }).join('') + dot(A.end)
     + '<line class="cross" x1="0" y1="' + padT + '" x2="0" y2="' + (H - padB)
       + '" stroke="var(--ink)" stroke-width="1" opacity="0"/>'
     + '<circle class="cross-dot" r="3.5" fill="var(--accent)" stroke="var(--card)" '
@@ -536,8 +678,8 @@ function drawChart(r){
       + 'font-family="var(--mono)" fill="var(--muted)">' + shortDate(S.dates[s.o]) + '</text>'
     + '<text x="' + (W - padR) + '" y="' + (H - padB + 12) + '" text-anchor="end" font-size="9.5" '
       + 'font-family="var(--mono)" fill="var(--muted)">' + shortDate(S.dates[n-1]) + '</text>'
-    + rail(A.start12, A.end, 0, '12&ndash;1', pct(r.ret12))
-    + rail(A.start6, A.end, 1, '6&ndash;1', pct(r.ret6))
+    + orderedWins().map(function(w, i){
+        return rail(A['start' + w], A.end, i, WLBL[w], pct(r.m[w].ret)); }).join('')
     + '</svg>';
 
   host.innerHTML = svg + '<div class="tip" id="tip"></div>';
@@ -580,6 +722,7 @@ window.addEventListener('resize', function(){
 });
 
 /* ---------- groups ---------- */
+function renderGroups(){
 $('#view-group').innerHTML =
   '<div class="intro">Instruments whose average-linkage correlation holds at or above '
     + '<span class="num">' + M.cluster_threshold + '</span> across '
@@ -592,7 +735,7 @@ $('#view-group').innerHTML =
         + ' &middot; min ' + c.min_corr.toFixed(3) + '</span></h3>'
         + '<div class="members">' + c.members.map(function(t){
             return '<button class="tag" data-go="' + t + '"><span class="t">' + t
-              + '</span><b>#' + byTicker[t].rank + '</b></button>';
+              + '</span><b>#' + RANK[t] + '</b></button>';
           }).join('') + '</div></div>';
     }).join('')
   + '<div class="card"><h3>Near-duplicate pairs<span class="rho">&rho; &ge; '
@@ -601,17 +744,25 @@ $('#view-group').innerHTML =
         return '<div class="dupe"><span class="p">' + d.a + ' &nbsp;/&nbsp; ' + d.b
           + '</span><span class="v">' + d.corr.toFixed(4) + '</span></div>';
       }).join('') + '</div></div>';
+}
 $('#view-group').addEventListener('click', function(e){
   var g = e.target.closest('[data-go]'); if (g) showTicker(g.dataset.go);
 });
 
 /* ---------- footer ---------- */
 $('#foot').innerHTML =
-  '<b>Momentum.</b> 12&ndash;1 is the return from ' + (M.min_rank_sessions - 1)
-  + ' sessions back to 21 sessions back, divided by the realized daily volatility of that same '
-  + 'window; 6&ndash;1 is the 126&rarr;21 equivalent. Both are z-scored across the ranked universe '
-  + 'and blended 50/50. Returns and vols are left un-annualized &mdash; the cross-sectional z-score '
-  + 'is scale-invariant. Every category ranks together; category is display metadata only.<br><br>'
+  '<b>Momentum.</b> A ' + WINS.join('/') + '&ndash;1 window is the return from that many months '
+  + 'back to ' + M.lag + ' sessions back &mdash; '
+  + WINS.map(function(w){ return M.windows[w] + '&rarr;' + M.lag; }).join(', ')
+  + ' sessions. The vol-adjusted measure divides that return by the realized daily volatility of '
+  + 'the same window; the raw measure uses the return alone. Either way each window is z-scored '
+  + 'across the ' + M.ranked + ' ranked instruments and the selected windows are averaged at equal '
+  + 'weight &mdash; averaging z-scores rather than the underlying numbers is what stops a longer '
+  + 'window outvoting a shorter one purely because its returns are bigger. Returns and vols are '
+  + 'left un-annualized; the cross-sectional z-score is scale-invariant. Every instrument clears '
+  + 'the ' + M.min_rank_sessions + '-session bar for the longest window, so the population is the '
+  + 'same whichever windows you pick. Every category ranks together; category is display metadata '
+  + 'only.<br><br>'
   + '<b>Correlation.</b> Pearson on <span class="num">' + M.correlation_returns
   + '</span> raw daily returns spanning <span class="num">' + M.correlation_sessions
   + '</span> aligned sessions (<span class="mono">' + esc(M.correlation_window[0]) + '</span> to '
@@ -628,6 +779,6 @@ $('#foot').innerHTML =
   + '<b>Watchlist.</b> Stored in this browser only &mdash; it never leaves the device and is '
   + 'not shared with anyone who opens this page. Not investment advice.';
 
-syncChips();
+reRank(); paintConfig(); paintCaveat(); renderGroups(); syncChips();
 })();
 </script>

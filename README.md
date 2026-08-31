@@ -71,20 +71,35 @@ anything whose median dollar volume over the last 60 sessions is under $1M.
 
 **Ranking eligibility** is 253 completed sessions — 252 for the 12–1 lookback
 plus the one extra observation the indexing needs. Newer ETPs qualify as soon as
-they clear that bar.
+they clear that bar. That single bar is set by the longest window and applies to
+all three, so an instrument that can be ranked can be ranked on any of them.
+Switching windows in the UI therefore never changes the population, and a
+z-score always means the same thing relative to the same 270 names.
 
-**Momentum.** With prices oldest-first and `p[-1]` the last completed session:
+**Momentum.** Three windows, all ending 21 sessions back. With prices
+oldest-first and `p[-1]` the last completed session:
 
-| | window | return | vol |
-|---|---|---|---|
-| 12–1 | `p[-253]` → `p[-22]` | 231 sessions | sd of the 231 daily returns |
-| 6–1 | `p[-127]` → `p[-22]` | 105 sessions | sd of the 105 daily returns |
+| | window | daily returns |
+|---|---|---|
+| 12–1 | `p[-253]` → `p[-22]` | 231 |
+| 9–1 | `p[-190]` → `p[-22]` | 168 |
+| 6–1 | `p[-127]` → `p[-22]` | 105 |
 
-Each score is `return / realized daily vol` of the matching window. Returns and
-vols are left un-annualized — the cross-sectional z-score is scale-invariant, so
-annualizing would change nothing. The two scores are z-scored separately across
-the ranked universe, blended 50/50, and sorted. All categories rank together;
-category is display metadata only.
+Each window yields two measures: the **raw return**, and the **vol-adjusted**
+`return / realized daily vol` of that same window. Returns and vols are left
+un-annualized — the cross-sectional z-score is scale-invariant, so annualizing
+would change nothing.
+
+**Both measures are z-scored per window across the ranked universe, and only
+z-scores are ever averaged.** That is what makes an equal-weighted blend
+actually equal. A raw 12–1 return is mechanically larger than a raw 6–1 return
+simply because it covers twice the ground, so averaging the raw numbers would
+hand the longest window the loudest vote without anyone choosing that.
+Standardising each window first puts them on the same footing. With one window
+selected the z-score is a monotone transform of the underlying value, so the
+ordering is exactly the raw ordering of that measure.
+
+All categories rank together; category is display metadata only.
 
 **The chart series** is the last 378 sessions per instrument (~18 months: the
 253-session 12-1 window plus lead-in), rebased to 1.0 at the 12-1 entry price so
@@ -106,13 +121,26 @@ or consolidated — the groups exist to be looked at.
 
 ## The UI
 
+Two controls sit above the ranking: **measure** (vol-adjusted or raw return) and
+**windows** (any non-empty combination of 12–1, 9–1 and 6–1, equally weighted).
+The default is vol-adjusted 12–1 + 6–1, which is the original brief's ranking.
+The choice persists per browser, and the twelve reachable combinations were
+checked against an independent Python computation of the same orderings.
+
+Raw-return mode is the honest answer to the T-bill problem below: the same four
+near-cash names that lead the vol-adjusted table sit at ranks 153–160 on raw
+return, which is where their returns alone put them.
+
 The ranking is a list; tapping a row opens that instrument, tapping the star
 adds it to a watchlist.
 
-The per-ticker view draws the price line with both momentum windows shaded in
-place: the 12-1 window, the 6-1 window nested inside it, and the last 21
-sessions hatched to mark what both measures deliberately skip. Bracket rails
-under the plot label each window with its return. It is the quickest way to see
+The per-ticker view draws the price line with the selected windows shaded in
+place. They all end at the same point, so they nest: 12–1, then 9–1, then 6–1,
+each a step darker, with the last 21 sessions hatched to mark what every window
+deliberately skips. Bracket rails under the plot label each with its return, and
+a table below lists all three windows — including the ones currently switched
+off, which is often the interesting part. Gold ranked on 9–1 + 6–1 shows the
+point: +20.9% over 12 months, −21.9% over 6. It is the quickest way to see
 why something ranks where it does -- IBIT shows a -42% 12-1 window with a sharp
 rebound sitting entirely inside the skipped zone.
 
@@ -147,8 +175,10 @@ AAXJ, 0.972).
 
 ## Known limitations
 
-- **T-bill funds dominate the ranking.** SGOV, BIL and SHV take the top three
-  slots at blended z ≈ +7.7 to +8.9, with FLOT fourth. Their 12–1 returns are
+- **T-bill funds dominate the vol-adjusted ranking.** SGOV, BIL and SHV take the
+  top three slots at blended z ≈ +7.7 to +8.9, with FLOT fourth. Switching the
+  measure to raw return drops them to 153–160, so the screen now has an answer
+  to this even though the underlying point stands. Their 12–1 returns are
   ordinary (~3.5%) but realized daily vol is ~0.01%, so `return / vol` explodes.
   This is exactly what the specified formula produces; it is not a bug, and it
   is the first thing to review. It is also amplified by FMP's two-decimal

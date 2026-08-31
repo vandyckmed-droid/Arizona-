@@ -19,10 +19,15 @@ CACHE = os.path.join(ROOT, "data", "prices.json")
 OUT = os.path.join(ROOT, "web", "data.json")
 
 # --- momentum windows, in completed trading sessions ------------------------
-LAG = 21             # skip the most recent month (the "-1" in 12-1)
-LOOK_12 = 252        # ~12 months
-LOOK_6 = 126         # ~6 months
-MIN_RANK_SESSIONS = LOOK_12 + 1   # 253: the 12-1 window needs a price 252 sessions back
+LAG = 21             # skip the most recent month (the "-1" in every window)
+WINDOWS = {"12": 252, "9": 189, "6": 126}   # lookback in sessions, all ending at LAG
+MIN_RANK_SESSIONS = max(WINDOWS.values()) + 1   # 253, set by the longest window
+
+# One eligibility bar for every window, not one per window. An instrument that
+# can be ranked can be ranked on all three, so switching windows in the UI never
+# changes the population -- and therefore never changes what a z-score is
+# relative to. That comparability is worth more than admitting a few extra
+# short-history names to the 6-1 ranking.
 
 # --- correlation ------------------------------------------------------------
 CORR_SESSIONS = 756  # ~3 years of aligned closes -> 755 daily returns
@@ -140,8 +145,8 @@ def main():
     rows = []
     for ticker, k in kept.items():
         closes = k["rec"]["close"]
-        s12, s6 = window_stats(closes, LOOK_12), window_stats(closes, LOOK_6)
-        if s12 is None or s6 is None:
+        stats = {w: window_stats(closes, look) for w, look in WINDOWS.items()}
+        if any(v is None for v in stats.values()):
             excluded.append({"ticker": ticker, "reason": "zero realized volatility in window"})
             continue
         m = meta_by_ticker[ticker]
@@ -153,19 +158,26 @@ def main():
             "structure": m["structure"],
             "sessions": len(closes),
             "dollar_volume": round(k["dollar_volume"]),
-            "ret12": s12[0], "vol12": s12[1], "score12": s12[2],
-            "ret6": s6[0], "vol6": s6[1], "score6": s6[2],
+            "m": {w: {"ret": v[0], "vol": v[1], "score": v[2]} for w, v in stats.items()},
         })
 
-    z12 = zscore([r["score12"] for r in rows])
-    z6 = zscore([r["score6"] for r in rows])
-    for r, a, b in zip(rows, z12, z6):
-        r["z12"], r["z6"] = float(a), float(b)
-        r["blend"] = float(0.5 * a + 0.5 * b)
+    # Both measures get cross-sectionally z-scored per window, and the UI only
+    # ever averages z-scores. That is what keeps an equal-weighted blend equal:
+    # a raw 12-1 return is mechanically larger than a raw 6-1 return, so
+    # averaging the raw numbers would quietly hand the longest window the
+    # biggest vote. Z-scoring first puts every window on the same footing.
+    # With a single window selected the z-score is a monotone transform of the
+    # underlying value, so the ordering is exactly the raw ordering.
+    for w in WINDOWS:
+        zv = zscore([r["m"][w]["score"] for r in rows])
+        zr = zscore([r["m"][w]["ret"] for r in rows])
+        for r, a, b in zip(rows, zv, zr):
+            r["m"][w]["zv"] = float(a)   # z of return / realized vol
+            r["m"][w]["zr"] = float(b)   # z of the raw return
 
-    rows.sort(key=lambda r: (-r["blend"], r["ticker"]))
-    for i, r in enumerate(rows, 1):
-        r["rank"] = i
+    # Deterministic file order, matching the UI's default view. The UI re-sorts
+    # for any other measure/window choice.
+    rows.sort(key=lambda r: (-(r["m"]["12"]["zv"] + r["m"]["6"]["zv"]) / 2, r["ticker"]))
 
     # ------------------------------------------------------------ correlation
     corr_set = set(corr_dates)
@@ -235,7 +247,7 @@ def main():
     # Every series aligns to the reference calendar, so the dates are stored once
     # and a short history is placed by its offset rather than padded.
     series_dates = reference[-SERIES_SESSIONS:]
-    i_12 = SERIES_SESSIONS - 1 - LOOK_12
+    i_12 = SERIES_SESSIONS - 1 - WINDOWS["12"]
     series = {}
     for r in rows:
         rec = kept[r["ticker"]]["rec"]
@@ -268,6 +280,10 @@ def main():
             "correlation_returns": int(rets.shape[1]),
             "correlation_window": [corr_dates[0], corr_dates[-1]],
             "min_rank_sessions": MIN_RANK_SESSIONS,
+            "windows": WINDOWS,
+            "lag": LAG,
+            "default_measure": "zv",
+            "default_windows": ["12", "6"],
             "cluster_threshold": CLUSTER_CORR,
             "duplicate_threshold": DUPLICATE_CORR,
             "min_dollar_volume": MIN_DOLLAR_VOLUME,
@@ -277,12 +293,11 @@ def main():
         },
         "series": {
             "dates": series_dates,
-            "anchors": {
-                "start12": i_12,
-                "start6": SERIES_SESSIONS - 1 - LOOK_6,
-                "end": SERIES_SESSIONS - 1 - LAG,
-                "last": SERIES_SESSIONS - 1,
-            },
+            "anchors": dict(
+                [("start" + w, SERIES_SESSIONS - 1 - look) for w, look in WINDOWS.items()],
+                end=SERIES_SESSIONS - 1 - LAG,
+                last=SERIES_SESSIONS - 1,
+            ),
             "data": series,
         },
         "rows": rows,
