@@ -29,6 +29,11 @@ MIN_RANK_SESSIONS = max(WINDOWS.values()) + 1   # 253, set by the longest window
 # relative to. That comparability is worth more than admitting a few extra
 # short-history names to the 6-1 ranking.
 
+# The chart's widest view is 12 months, so ship exactly the 12-1 window and the
+# one extra session its indexing needs. Anything longer would be bytes the UI
+# can never display.
+SERIES_SESSIONS = WINDOWS["12"] + 1   # 253
+
 # --- correlation ------------------------------------------------------------
 CORR_SESSIONS = 756  # ~3 years of aligned closes -> 755 daily returns
 CLUSTER_CORR = 0.90  # average-linkage cut: "these are broadly the same bet"
@@ -36,8 +41,6 @@ DUPLICATE_CORR = 0.98  # pairwise: "these are near-interchangeable"
 PEERS = 5
 
 # --- price series shipped to the UI ----------------------------------------
-SERIES_SESSIONS = 378   # ~18 months: the 253-session 12-1 window plus lead-in
-
 # --- liquidity floor --------------------------------------------------------
 LIQ_SESSIONS = 60
 MIN_DOLLAR_VOLUME = 1_000_000.0

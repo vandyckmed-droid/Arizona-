@@ -597,7 +597,7 @@ function tickerView(r){
       + '<span id="watch-text">' + (on ? 'On watchlist' : 'Add to watchlist') + '</span></button>'
     + '<figure>'
       + '<figcaption>Price rebased to 100 at the 12&ndash;1 entry'
-        + '<span class="hint">pinch or drag to explore</span></figcaption>'
+        + '<span class="hint">drag for values</span></figcaption>'
       + '<div class="chart" id="chart"></div>'
       + '<div class="range"><span>Range</span><div class="seg" id="seg-range">'
         + RANGES.map(function(q){
@@ -687,18 +687,23 @@ $('#ticker').addEventListener('click', function(e){
    frame. Re-serialising the markup on every pointermove is what makes a chart
    like this feel sticky on a phone. */
 var CH = null;
-var MIN_SPAN = 20;   // never zoom past roughly a month of sessions on screen
 
-/* Chart display ranges, in completed sessions. These are the time axis only --
-   they are deliberately labelled in months so they never read as the 12-1 /
-   9-1 / 6-1 momentum windows, which the rails and the ranking use. `all` is
-   the whole shipped series, ~18 months. */
+/* Chart display ranges, in completed sessions -- the time axis only. Labelled
+   in months so they never read as the 12-1 / 9-1 / 6-1 momentum windows the
+   rails and the ranking use. 12M is the full shipped series: build.py ships
+   exactly the 12-1 window, so the widest view starts precisely at the rebase
+   point and the line opens at 100 on the left edge. */
 var RANGES = [
-  {k: 'all', label: 'All', span: null},
   {k: '12m', label: '12M', span: 252},
   {k: '6m',  label: '6M',  span: 126},
   {k: '3m',  label: '3M',  span: 63}
 ];
+var DEFAULT_RANGE = '12m';
+
+function spanOf(key){
+  var q = RANGES.filter(function(x){ return x.k === key; })[0];
+  return q ? q.span : RANGES[0].span;
+}
 
 function drawChart(r, keepView){
   var host = $('#chart'); if (!host) return;
@@ -820,33 +825,26 @@ function drawChart(r, keepView){
     line100: line100, lbl100: lbl100, lblHi: lblHi, lblLo: lblLo,
     dLoLbl: dLoLbl, dHiLbl: dHiLbl, cross: cross, cdot: cdot,
     tip: tip, host: host,
-    view: keep || {lo: 0, hi: n - 1},
+    view: keep || {lo: n - 1 - spanOf(DEFAULT_RANGE), hi: n - 1},
     y: null, frame: 0
   };
   clampView();
   applyView();
-  attachGestures();
+  attachCrosshair();
   attachRange();
 }
 
 function setRange(key){
   var q = RANGES.filter(function(x){ return x.k === key; })[0];
   if (!q) return;
-  var n = CH.n;
-  CH.view = q.span === null
-    ? {lo: 0, hi: n - 1}
-    : {lo: n - 1 - q.span, hi: n - 1};   // presets anchor on the most recent session
+  CH.view = {lo: CH.n - 1 - q.span, hi: CH.n - 1};   // always anchored on the latest session
   clampView(); hideCross(); applyView();
 }
 
-/* Which preset the current view corresponds to, if any. A pinch or a pan
-   usually lands between presets, and then none is active. */
 function activeRange(){
-  var v = CH.view, n = CH.n, span = v.hi - v.lo;
-  if (Math.abs(span - (n - 1)) < 1.5) return 'all';
-  if (Math.abs(v.hi - (n - 1)) > 1.5) return null;   // not anchored to the latest session
+  var span = CH.view.hi - CH.view.lo;
   for (var i = 0; i < RANGES.length; i++){
-    if (RANGES[i].span !== null && Math.abs(span - RANGES[i].span) < 1.5) return RANGES[i].k;
+    if (Math.abs(span - RANGES[i].span) < 1.5) return RANGES[i].k;
   }
   return null;
 }
@@ -870,15 +868,12 @@ function attachRange(){
 
 function clampView(){
   var v = CH.view, n = CH.n;
-  var span = Math.min(Math.max(v.hi - v.lo, MIN_SPAN), n - 1);
-  var mid = (v.lo + v.hi) / 2;
-  v.lo = mid - span / 2; v.hi = mid + span / 2;
-  if (v.lo < 0){ v.hi -= v.lo; v.lo = 0; }
-  if (v.hi > n - 1){ v.lo -= (v.hi - (n - 1)); v.hi = n - 1; }
-  if (v.lo < 0) v.lo = 0;
+  var span = Math.min(v.hi - v.lo, n - 1);
+  v.hi = Math.min(v.hi, n - 1);
+  v.lo = v.hi - span;
+  if (v.lo < 0){ v.lo = 0; v.hi = span; }
 }
 
-function isZoomed(){ return CH && (CH.view.hi - CH.view.lo) < CH.n - 1 - 0.5; }
 function cx(i){ return CH.padL + ((i - CH.view.lo) / (CH.view.hi - CH.view.lo)) * CH.plotW; }
 
 /* Rewrites geometry only -- no markup is re-serialised here. */
@@ -957,27 +952,6 @@ function applyView(){
   paintRange();
 }
 
-function scheduleView(){
-  if (CH.frame) return;
-  CH.frame = requestAnimationFrame(function(){ CH.frame = 0; applyView(); });
-}
-
-function zoomAt(factor, anchorPx){
-  var v = CH.view;
-  var frac = Math.min(Math.max((anchorPx - CH.padL) / CH.plotW, 0), 1);
-  var anchorIdx = v.lo + frac * (v.hi - v.lo);
-  var span = Math.min(Math.max((v.hi - v.lo) / factor, MIN_SPAN), CH.n - 1);
-  v.lo = anchorIdx - frac * span;
-  v.hi = v.lo + span;
-  clampView();
-}
-
-function panBy(dxPx){
-  var v = CH.view, perPx = (v.hi - v.lo) / CH.plotW;
-  v.lo -= dxPx * perPx; v.hi -= dxPx * perPx;
-  clampView();
-}
-
 function showCross(px){
   var s = CH.s, v = CH.view;
   var i = Math.round(v.lo + ((px - CH.padL) / CH.plotW) * (v.hi - v.lo));
@@ -1004,100 +978,23 @@ function hideCross(){
   CH.tip.style.opacity = '0';
 }
 
-function attachGestures(){
-  var host = CH.host, pts = new Map();
-  var pinch = null, panning = false, moved = 0, lastTap = 0;
-
-  function toLocal(ev){
+/* Pointer handling is just the value readout now: the presets own the time
+   axis, so there is no gesture state machine, no pinch maths and no
+   non-passive listeners. touch-action:pan-y stays so a horizontal scrub
+   reaches us while a vertical swipe still scrolls the page. */
+function attachCrosshair(){
+  var host = CH.host;
+  function at(ev){
     var box = CH.svg.getBoundingClientRect();
-    return (ev.clientX - box.left) * (CH.W / box.width);
+    showCross((ev.clientX - box.left) * (CH.W / box.width));
   }
-
-  host.addEventListener('pointerdown', function(ev){
-    pts.set(ev.pointerId, {x: ev.clientX, local: toLocal(ev)});
-    if (pts.size === 1){
-      moved = 0; panning = false;
-      if (ev.pointerType !== 'touch') showCross(toLocal(ev));
-    } else if (pts.size === 2){
-      hideCross();
-      var a = Array.from(pts.values());
-      pinch = {spread: Math.abs(a[0].x - a[1].x) || 1,
-               span: CH.view.hi - CH.view.lo,
-               mid: (a[0].local + a[1].local) / 2};
-    }
-    try { host.setPointerCapture(ev.pointerId); } catch (e) {}
-  });
-
-  host.addEventListener('pointermove', function(ev){
-    var p = pts.get(ev.pointerId); if (!p) return;
-    var prevX = p.x;
-    p.x = ev.clientX; p.local = toLocal(ev);
-
-    if (pts.size >= 2 && pinch){
-      var a = Array.from(pts.values());
-      var spread = Math.abs(a[0].x - a[1].x) || 1;
-      var mid = (a[0].local + a[1].local) / 2;
-      /* zoom about the pinch midpoint, and let that midpoint drag the view too,
-         so two fingers zoom and pan in one continuous motion */
-      var span = Math.min(Math.max(pinch.span * (pinch.spread / spread), MIN_SPAN), CH.n - 1);
-      var frac = Math.min(Math.max((mid - CH.padL) / CH.plotW, 0), 1);
-      var anchorIdx = CH.view.lo + ((pinch.mid - CH.padL) / CH.plotW) * (CH.view.hi - CH.view.lo);
-      CH.view.lo = anchorIdx - frac * span;
-      CH.view.hi = CH.view.lo + span;
-      clampView();
-      pinch.spread = spread; pinch.span = CH.view.hi - CH.view.lo; pinch.mid = mid;
-      scheduleView();
-      return;
-    }
-
-    moved += Math.abs(ev.clientX - prevX);
-    if (isZoomed()){
-      /* one finger pans a zoomed chart; the crosshair would fight the drag, so
-         it stays hidden until the finger stops moving */
-      if (!panning && moved > 3){ panning = true; hideCross(); }
-      if (panning){
-        var box = CH.svg.getBoundingClientRect();
-        panBy((ev.clientX - prevX) * (CH.W / box.width));
-        scheduleView();
-        return;
-      }
-    }
-    showCross(toLocal(ev));
-  });
-
-  function release(ev){
-    var wasPanning = panning;
-    pts.delete(ev.pointerId);
-    if (pts.size < 2) pinch = null;
-    if (pts.size === 0){
-      panning = false;
-      if (!wasPanning && moved < 4 && ev.type === 'pointerup'){
-        var now = Date.now();
-        if (now - lastTap < 320){ CH.view = {lo: 0, hi: CH.n - 1}; hideCross(); applyView(); }
-        else if (ev.pointerType === 'touch') showCross(toLocal(ev));
-        lastTap = now;
-      }
-    }
-  }
-  host.addEventListener('pointerup', release);
-  host.addEventListener('pointercancel', function(ev){ hideCross(); release(ev); });
-  host.addEventListener('pointerleave', function(ev){
-    if (ev.pointerType !== 'touch' && !pts.size) hideCross(); });
-
-  /* touch-action:pan-y lets the page scroll vertically off this element, but a
-     two-finger gesture must not scroll or page-zoom -- that needs a
-     non-passive listener */
-  host.addEventListener('touchmove', function(ev){
-    if (ev.touches.length >= 2) ev.preventDefault();
-  }, {passive: false});
-
-  host.addEventListener('wheel', function(ev){
-    ev.preventDefault();
-    zoomAt(ev.deltaY < 0 ? 1.18 : 1 / 1.18, toLocal(ev));
-    scheduleView();
-  }, {passive: false});
-
+  host.addEventListener('pointerdown', at);
+  host.addEventListener('pointermove', at);
+  host.addEventListener('pointerup', hideCross);
+  host.addEventListener('pointercancel', hideCross);
+  host.addEventListener('pointerleave', hideCross);
 }
+
 var redrawTimer;
 window.addEventListener('resize', function(){
   if ($('#ticker').hidden) return;
