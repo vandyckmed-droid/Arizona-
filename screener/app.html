@@ -172,10 +172,20 @@
 
   figure{margin:18px 0 0}
   figcaption{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
-    font-weight:500;margin-bottom:8px}
+    font-weight:500;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:2px 12px;
+    justify-content:space-between;align-items:baseline}
   .chart{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:10px 8px 8px;
     position:relative;touch-action:pan-y}
   .chart svg{display:block;width:100%}
+  .range{display:flex;align-items:center;gap:8px;margin-top:9px}
+  .range > span{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);font-weight:500}
+  .range .seg{flex:1}
+  .range .seg button{flex:1;font-family:var(--mono);font-size:11.5px;padding:6px 4px}
+  .range .seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+  .hint{font-size:10.5px;color:var(--muted);letter-spacing:0;text-transform:none;
+    font-weight:400;white-space:nowrap}
+
   .tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);
     border-radius:6px;padding:5px 8px;font-size:11px;white-space:nowrap;opacity:0;
     transition:opacity .1s;z-index:2}
@@ -269,6 +279,11 @@ function sgn(x){ return (x >= 0 ? '+' : '&minus;') + Math.abs(x).toFixed(2); }
 function fx(x, dp){ var t = x.toFixed(dp === undefined ? 2 : dp);
   return t.charAt(0) === '-' ? '&minus;' + t.slice(1) : t; }
 function tone(x){ return x > 0.005 ? 'pos' : (x < -0.005 ? 'neg' : ''); }
+function longDate(iso){
+  var p = iso.split('-'), mo = ['January','February','March','April','May','June','July',
+    'August','September','October','November','December'];
+  return (+p[2]) + ' ' + mo[+p[1] - 1] + ' ' + p[0];
+}
 function shortDate(iso){
   var p = iso.split('-'), mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return mo[+p[1]-1] + ' ' + (+p[2]) + ' ' + p[0].slice(2);
@@ -586,8 +601,15 @@ function tickerView(r){
       + ' style="--fill:' + (on ? 'currentColor' : 'none') + '">' + STAR
       + '<span id="watch-text">' + (on ? 'On watchlist' : 'Add to watchlist') + '</span></button>'
     + '<figure>'
-      + '<figcaption>Price rebased to 100 at the 12&ndash;1 entry</figcaption>'
+      + '<figcaption>Price rebased to 100 at the 12&ndash;1 entry'
+        + '<span class="hint">drag for values</span></figcaption>'
       + '<div class="chart" id="chart"></div>'
+      + '<div class="range"><span id="range-lbl">Range</span>'
+        + '<div class="seg" id="seg-range" role="group" aria-labelledby="range-lbl">'
+        + RANGES.map(function(q){
+            return '<button data-r="' + q.k + '" aria-label="Show ' + q.months
+              + ' months">' + q.label + '</button>'; }).join('')
+        + '</div></div>'
       + '<div class="legend">'
         + orderedWins().map(function(w){
             return '<span><i style="background:var(--band' + w + ')"></i>'
@@ -663,113 +685,324 @@ $('#ticker').addEventListener('click', function(e){
   if (g) showTicker(g.dataset.go);
 });
 
-/* ---------- the chart ---------- */
-function drawChart(r){
+/* ---------- the chart ----------
+   The displayed range is a window [lo, hi] over the session index, and every
+   mark is positioned through x(), so the bands, rails, window dots and
+   crosshair all share one mapping and stay pinned to their data points.
+
+   The SVG is built once; changing range rewrites geometry attributes rather
+   than re-serialising the markup. */
+var CH = null;
+
+/* Chart display ranges, in completed sessions -- the time axis only. Labelled
+   in months so they never read as the 12-1 / 9-1 / 6-1 momentum windows the
+   rails and the ranking use. 12M is the full shipped series: build.py ships
+   exactly the 12-1 window, so the widest view starts precisely at the rebase
+   point and the line opens at 100 on the left edge. */
+var RANGES = [
+  {k: '12m', label: '12M', months: 12, span: 252},
+  {k: '6m',  label: '6M',  months: 6,  span: 126},
+  {k: '3m',  label: '3M',  months: 3,  span: 63}
+];
+var DEFAULT_RANGE = '12m';
+
+function spanOf(key){
+  var q = RANGES.filter(function(x){ return x.k === key; })[0];
+  return q ? q.span : RANGES[0].span;
+}
+
+function drawChart(r, keepView){
   var host = $('#chart'); if (!host) return;
   var s = S.data[r.ticker];
-  var W = host.clientWidth, H = 264;
+  /* clientWidth includes the host's padding, so using it as the viewBox width
+     made the SVG letterbox itself and render ~4% small. Measure the content box
+     so one viewBox unit is exactly one CSS pixel -- the pointer maths below
+     depends on that. */
+  var cs = getComputedStyle(host);
+  var W = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  var H = 264;
   var padL = 6, padR = 36, padT = 14, padB = 80;
-  var n = S.dates.length;
-  var x = function(i){ return padL + (i / (n - 1)) * (W - padL - padR); };
+  var n = S.dates.length, plotW = W - padL - padR, plotH = H - padT - padB;
+  var wins = orderedWins();
+  var keep = keepView && CH && CH.ticker === r.ticker ? CH.view : null;
 
-  var dLo = Infinity, dHi = -Infinity;
-  s.p.forEach(function(v){ if (v < dLo) dLo = v; if (v > dHi) dHi = v; });
-  var pad = (dHi - dLo) * 0.10 || 0.02;
-  var lo = dLo - pad, hi = dHi + pad;   // plotting domain: padded so the line never touches the edge
-  var y = function(v){ return padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB); };
-
-  var d = s.p.map(function(v, k){
-    return (k ? 'L' : 'M') + x(s.o + k).toFixed(1) + ' ' + y(v).toFixed(1); }).join(' ');
-
-  function band(a, b, fill){
-    return '<rect x="' + x(a).toFixed(1) + '" y="' + padT + '" width="' + (x(b) - x(a)).toFixed(1)
-      + '" height="' + (H - padT - padB) + '" fill="' + fill + '"/>';
-  }
-  function dot(i){
-    var v = s.p[i - s.o];
-    return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1)
-      + '" r="4" fill="var(--accent)" stroke="var(--card)" stroke-width="2"/>';
-  }
-  function rail(a, b, row, label, ret){
-    var ya = H - padB + 26 + row * 18, xa = x(a), xb = x(b);
-    return '<g>'
-      + '<line x1="' + xa.toFixed(1) + '" y1="' + ya + '" x2="' + xb.toFixed(1) + '" y2="' + ya
-        + '" stroke="var(--muted)" stroke-width="1"/>'
-      + '<line x1="' + xa.toFixed(1) + '" y1="' + (ya-3) + '" x2="' + xa.toFixed(1) + '" y2="' + (ya+3)
-        + '" stroke="var(--muted)" stroke-width="1"/>'
-      + '<line x1="' + xb.toFixed(1) + '" y1="' + (ya-3) + '" x2="' + xb.toFixed(1) + '" y2="' + (ya+3)
-        + '" stroke="var(--muted)" stroke-width="1"/>'
-      + '<text x="' + ((xa+xb)/2).toFixed(1) + '" y="' + (ya - 5) + '" text-anchor="middle" '
-        + 'font-size="10" font-family="var(--mono)" fill="var(--mid)">' + label + ' ' + ret + '</text>'
-    + '</g>';
+  function svgEl(tag, attrs){
+    var e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
   }
 
-  var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" height="' + H + '" role="img" '
-    + 'aria-label="' + r.ticker + ' price rebased to 100 at the 12 minus 1 window start. '
-    + orderedWins().map(function(w){
-        return w + ' minus 1 return ' + (r.m[w].ret*100).toFixed(1) + ' percent'; }).join(', ')
-    + '.">'
-    + '<defs><pattern id="hatch" width="5" height="5" patternTransform="rotate(45)" '
-      + 'patternUnits="userSpaceOnUse">'
-      + '<line x1="0" y1="0" x2="0" y2="5" stroke="var(--hatch)" stroke-width="1.1"/></pattern></defs>'
-    /* every window ends at the same point, so the selected ones nest; painting
-       widest-first leaves each visible as its own tint */
-    + orderedWins().map(function(w){
-        return band(A['start' + w], A.end, 'var(--band' + w + ')'); }).join('')
-    + band(A.end, A.last, 'url(#hatch)')
-    /* the rebase line: everything above it is a gain over the 12-1 entry price */
-    + '<line x1="' + padL + '" y1="' + y(1).toFixed(1) + '" x2="' + (W - padR)
-      + '" y2="' + y(1).toFixed(1) + '" stroke="var(--muted)" stroke-width="1" '
-      + 'stroke-dasharray="2 3" opacity=".65"/>'
-    + '<text x="' + (W - padR + 4) + '" y="' + (y(1) + 3.5).toFixed(1) + '" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">100</text>'
-    + '<text x="' + (W - padR + 4) + '" y="' + (y(dHi) + 3.5).toFixed(1) + '" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">' + (dHi*100).toFixed(0) + '</text>'
-    + '<text x="' + (W - padR + 4) + '" y="' + (y(dLo) + 3.5).toFixed(1) + '" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">' + (dLo*100).toFixed(0) + '</text>'
-    + '<path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="2" '
-      + 'stroke-linejoin="round" stroke-linecap="round"/>'
-    + orderedWins().map(function(w){ return dot(A['start' + w]); }).join('') + dot(A.end)
-    + '<line class="cross" x1="0" y1="' + padT + '" x2="0" y2="' + (H - padB)
-      + '" stroke="var(--ink)" stroke-width="1" opacity="0"/>'
-    + '<circle class="cross-dot" r="3.5" fill="var(--accent)" stroke="var(--card)" '
-      + 'stroke-width="2" opacity="0"/>'
-    + '<text x="' + padL + '" y="' + (H - padB + 12) + '" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">' + shortDate(S.dates[s.o]) + '</text>'
-    + '<text x="' + (W - padR) + '" y="' + (H - padB + 12) + '" text-anchor="end" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">' + shortDate(S.dates[n-1]) + '</text>'
-    + orderedWins().map(function(w, i){
-        return rail(A['start' + w], A.end, i, WLBL[w], pct(r.m[w].ret)); }).join('')
-    + '</svg>';
+  var baseLabel = r.ticker + ' price rebased to 100 at the 12 minus 1 window start. '
+    + wins.map(function(w){
+        return w + ' minus 1 return ' + (r.m[w].ret * 100).toFixed(1) + ' percent'; }).join(', ')
+    + '.';
+  var svg = svgEl('svg', {
+    viewBox: '0 0 ' + W + ' ' + H, height: H, role: 'img', 'aria-label': baseLabel
+  });
 
-  host.innerHTML = svg + '<div class="tip" id="tip"></div>';
-  $('#lg-skip').style.background =
+  var defs = svgEl('defs', {});
+  var pat = svgEl('pattern', {id: 'hatch', width: 5, height: 5,
+    patternTransform: 'rotate(45)', patternUnits: 'userSpaceOnUse'});
+  pat.appendChild(svgEl('line', {x1: 0, y1: 0, x2: 0, y2: 5,
+    stroke: 'var(--hatch)', 'stroke-width': 1.1}));
+  var clip = svgEl('clipPath', {id: 'plotclip'});
+  clip.appendChild(svgEl('rect', {x: padL, y: 0, width: plotW, height: H}));
+  defs.appendChild(pat); defs.appendChild(clip);
+  svg.appendChild(defs);
+
+  /* everything positioned by range lives in one clipped group: at 6M and 3M
+     the bands and rails start off the left edge, and this keeps them from
+     spilling over the y-axis labels in the right margin */
+  var g = svgEl('g', {'clip-path': 'url(#plotclip)'});
+  svg.appendChild(g);
+
+  var bands = {};
+  wins.forEach(function(w){                       // widest first: the nesting is the point
+    bands[w] = svgEl('rect', {y: padT, height: plotH, fill: 'var(--band' + w + ')'});
+    g.appendChild(bands[w]);
+  });
+  bands.skip = svgEl('rect', {y: padT, height: plotH, fill: 'url(#hatch)'});
+  g.appendChild(bands.skip);
+
+  /* the rebase line sits outside the clip: its x is fixed, only its y moves */
+  var line100 = svgEl('line', {x1: padL, x2: W - padR, stroke: 'var(--muted)',
+    'stroke-width': 1, 'stroke-dasharray': '2 3', opacity: '.65'});
+  svg.appendChild(line100);
+  function axisLabel(){
+    return svgEl('text', {x: W - padR + 4, 'font-size': 9.5,
+      'font-family': 'var(--mono)', fill: 'var(--muted)'});
+  }
+  var lbl100 = axisLabel(), lblHi = axisLabel(), lblLo = axisLabel();
+  lbl100.textContent = '100';
+  svg.appendChild(lbl100); svg.appendChild(lblHi); svg.appendChild(lblLo);
+
+  var path = svgEl('path', {fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2,
+    'stroke-linejoin': 'round', 'stroke-linecap': 'round'});
+  g.appendChild(path);
+
+  var dots = {};
+  wins.concat(['end']).forEach(function(k){
+    dots[k] = svgEl('circle', {r: 4, fill: 'var(--accent)',
+      stroke: 'var(--card)', 'stroke-width': 2});
+    g.appendChild(dots[k]);
+  });
+
+  var cross = svgEl('line', {y1: padT, y2: H - padB, stroke: 'var(--ink)',
+    'stroke-width': 1, opacity: 0});
+  var cdot = svgEl('circle', {r: 3.5, fill: 'var(--accent)', stroke: 'var(--card)',
+    'stroke-width': 2, opacity: 0});
+  g.appendChild(cross); g.appendChild(cdot);
+
+  function dateLabel(anchor){
+    return svgEl('text', {y: H - padB + 12, 'font-size': 9.5, 'text-anchor': anchor,
+      'font-family': 'var(--mono)', fill: 'var(--muted)'});
+  }
+  var dLoLbl = dateLabel('start'), dHiLbl = dateLabel('end');
+  dLoLbl.setAttribute('x', padL); dHiLbl.setAttribute('x', W - padR);
+  g.appendChild(dLoLbl); g.appendChild(dHiLbl);
+
+  var rails = {};
+  wins.forEach(function(w, row){
+    var ya = H - padB + 32 + row * 18;   // clear of the date labels above
+    var gr = svgEl('g', {});
+    var bar = svgEl('line', {y1: ya, y2: ya, stroke: 'var(--muted)', 'stroke-width': 1});
+    var capA = svgEl('line', {y1: ya - 3, y2: ya + 3, stroke: 'var(--muted)', 'stroke-width': 1});
+    var capB = svgEl('line', {y1: ya - 3, y2: ya + 3, stroke: 'var(--muted)', 'stroke-width': 1});
+    var txt = svgEl('text', {y: ya - 5, 'text-anchor': 'middle', 'font-size': 10,
+      'font-family': 'var(--mono)', fill: 'var(--mid)'});
+    txt.innerHTML = WLBL[w] + ' ' + pct(r.m[w].ret);
+    gr.appendChild(bar); gr.appendChild(capA); gr.appendChild(capB); gr.appendChild(txt);
+    g.appendChild(gr);
+    rails[w] = {bar: bar, capA: capA, capB: capB, txt: txt};
+  });
+
+  host.innerHTML = '';
+  host.appendChild(svg);
+  var tip = document.createElement('div');
+  tip.className = 'tip'; tip.id = 'tip';
+  host.appendChild(tip);
+  var skipLegend = $('#lg-skip');
+  if (skipLegend) skipLegend.style.background =
     'repeating-linear-gradient(45deg,var(--hatch) 0 1px,transparent 1px 4px)';
 
-  /* hover / touch crosshair */
-  var el = host.querySelector('svg'), tip = $('#tip');
-  var cross = el.querySelector('.cross'), cdot = el.querySelector('.cross-dot');
-  function move(ev){
-    var box = el.getBoundingClientRect();
-    var px = ((ev.touches ? ev.touches[0].clientX : ev.clientX) - box.left) * (W / box.width);
-    var i = Math.round(((px - padL) / (W - padL - padR)) * (n - 1));
-    i = Math.max(s.o, Math.min(n - 1, i));
-    var v = s.p[i - s.o];
-    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
-    cross.setAttribute('opacity', '.28');
-    cdot.setAttribute('cx', x(i)); cdot.setAttribute('cy', y(v)); cdot.setAttribute('opacity', '1');
-    tip.innerHTML = '<span class="d">' + shortDate(S.dates[i]) + '</span> &nbsp;'
-      + '<span class="v">' + (v*100).toFixed(1) + '</span>';
-    tip.style.opacity = '1';
-    var tx = x(i) * (box.width / W);
-    tip.style.left = Math.max(4, Math.min(box.width - tip.offsetWidth - 4, tx - tip.offsetWidth/2)) + 'px';
-    tip.style.top = '0px';
+  CH = {
+    ticker: r.ticker, r: r, s: s, n: n, W: W, H: H,
+    padL: padL, padR: padR, padT: padT, padB: padB, plotW: plotW, plotH: plotH,
+    wins: wins, svg: svg, path: path, bands: bands, dots: dots, rails: rails,
+    line100: line100, lbl100: lbl100, lblHi: lblHi, lblLo: lblLo,
+    dLoLbl: dLoLbl, dHiLbl: dHiLbl, cross: cross, cdot: cdot,
+    tip: tip, host: host, baseLabel: baseLabel,
+    view: keep || {lo: n - 1 - spanOf(DEFAULT_RANGE), hi: n - 1},
+    y: null, frame: 0
+  };
+  clampView();
+  applyView();
+  attachCrosshair();
+  attachRange();
+}
+
+function setRange(key){
+  var q = RANGES.filter(function(x){ return x.k === key; })[0];
+  if (!q) return;
+  CH.view = {lo: CH.n - 1 - q.span, hi: CH.n - 1};   // always anchored on the latest session
+  clampView(); hideCross(); applyView();
+}
+
+function activeRange(){
+  var span = CH.view.hi - CH.view.lo;
+  for (var i = 0; i < RANGES.length; i++){
+    if (Math.abs(span - RANGES[i].span) < 1.5) return RANGES[i].k;
   }
-  function leave(){ cross.setAttribute('opacity','0'); cdot.setAttribute('opacity','0'); tip.style.opacity='0'; }
-  host.addEventListener('pointermove', move);
-  host.addEventListener('pointerdown', move);
-  host.addEventListener('pointerleave', leave);
-  host.addEventListener('pointercancel', leave);
+  return null;
+}
+
+function paintRange(){
+  var act = activeRange();
+  var btns = document.querySelectorAll('#seg-range button');
+  for (var i = 0; i < btns.length; i++){
+    btns[i].setAttribute('aria-pressed', String(btns[i].dataset.r === act));
+  }
+}
+
+function attachRange(){
+  var seg = $('#seg-range'); if (!seg) return;
+  seg.addEventListener('click', function(ev){
+    var b = ev.target.closest('button'); if (!b) return;
+    setRange(b.dataset.r);
+  });
+  paintRange();
+}
+
+function clampView(){
+  var v = CH.view, n = CH.n;
+  var span = Math.min(v.hi - v.lo, n - 1);
+  v.hi = Math.min(v.hi, n - 1);
+  v.lo = v.hi - span;
+  if (v.lo < 0){ v.lo = 0; v.hi = span; }
+}
+
+function cx(i){ return CH.padL + ((i - CH.view.lo) / (CH.view.hi - CH.view.lo)) * CH.plotW; }
+
+/* Rewrites geometry only -- no markup is re-serialised here. */
+function applyView(){
+  var s = CH.s, v = CH.view, n = CH.n;
+
+  /* rescale y to what is actually on screen, so a shorter range opens up
+     instead of showing a flat line against the 12M axis */
+  var iLo = Math.max(s.o, Math.floor(v.lo)), iHi = Math.min(n - 1, Math.ceil(v.hi));
+  var dLo = Infinity, dHi = -Infinity;
+  for (var i = iLo; i <= iHi; i++){
+    var p = s.p[i - s.o];
+    if (p === undefined) continue;
+    if (p < dLo) dLo = p; if (p > dHi) dHi = p;
+  }
+  if (!isFinite(dLo)){ dLo = 1; dHi = 1; }
+  var pad = (dHi - dLo) * 0.10 || 0.02;
+  var lo = dLo - pad, hi = dHi + pad;
+  var y = CH.y = function(val){
+    return CH.padT + (1 - (val - lo) / (hi - lo)) * CH.plotH; };
+
+  /* only path the visible slice (plus a point either side so the line enters
+     and leaves the frame cleanly) */
+  var pLo = Math.max(s.o, Math.floor(v.lo) - 1), pHi = Math.min(n - 1, Math.ceil(v.hi) + 1);
+  var d = '';
+  for (var k = pLo; k <= pHi; k++){
+    d += (k === pLo ? 'M' : 'L') + cx(k).toFixed(1) + ' ' + y(s.p[k - s.o]).toFixed(1) + ' ';
+  }
+  CH.path.setAttribute('d', d);
+
+  function setBand(rect, a, b){
+    var xa = cx(a), xb = cx(b);
+    rect.setAttribute('x', xa.toFixed(1));
+    rect.setAttribute('width', Math.max(0, xb - xa).toFixed(1));
+  }
+  CH.wins.forEach(function(w){ setBand(CH.bands[w], A['start' + w], A.end); });
+  setBand(CH.bands.skip, A.end, A.last);
+
+  CH.wins.concat(['end']).forEach(function(k){
+    var idx = k === 'end' ? A.end : A['start' + k];
+    CH.dots[k].setAttribute('cx', cx(idx).toFixed(1));
+    CH.dots[k].setAttribute('cy', y(s.p[idx - s.o]).toFixed(1));
+  });
+
+  /* the rebase line only means anything while 100 is on screen. At 6M and 3M
+     the visible stretch often never trades near the entry price, and the line
+     must not then park itself in the margin under the date labels */
+  var y100 = y(1), on100 = y100 >= CH.padT && y100 <= CH.padT + CH.plotH;
+  CH.line100.setAttribute('opacity', on100 ? '.65' : '0');
+  CH.lbl100.setAttribute('opacity', on100 ? '1' : '0');
+  CH.line100.setAttribute('y1', y100.toFixed(1));
+  CH.line100.setAttribute('y2', y100.toFixed(1));
+  CH.lbl100.setAttribute('y', (y100 + 3.5).toFixed(1));
+  CH.lblHi.setAttribute('y', (y(dHi) + 3.5).toFixed(1));
+  CH.lblHi.textContent = (dHi * 100).toFixed(0);
+  CH.lblLo.setAttribute('y', (y(dLo) + 3.5).toFixed(1));
+  CH.lblLo.textContent = (dLo * 100).toFixed(0);
+
+  var iFrom = Math.max(s.o, Math.round(v.lo)), iTo = Math.min(n - 1, Math.round(v.hi));
+  CH.dLoLbl.textContent = shortDate(S.dates[iFrom]);
+  CH.dHiLbl.textContent = shortDate(S.dates[iTo]);
+  /* keep the spoken description in step with the range on screen */
+  CH.svg.setAttribute('aria-label', CH.baseLabel + ' Showing '
+    + longDate(S.dates[iFrom]) + ' to ' + longDate(S.dates[iTo]) + '.');
+
+  CH.wins.forEach(function(w){
+    var q = CH.rails[w], xa = cx(A['start' + w]), xb = cx(A.end);
+    q.bar.setAttribute('x1', xa.toFixed(1)); q.bar.setAttribute('x2', xb.toFixed(1));
+    q.capA.setAttribute('x1', xa.toFixed(1)); q.capA.setAttribute('x2', xa.toFixed(1));
+    q.capB.setAttribute('x1', xb.toFixed(1)); q.capB.setAttribute('x2', xb.toFixed(1));
+    /* centre the label over the part of the rail that is actually on screen.
+       At 6M and 3M a window starts off the left edge, and centring on the true
+       midpoint would jam the label into the corner under the date label. */
+    var visA = Math.max(xa, CH.padL), visB = Math.min(xb, CH.W - CH.padR);
+    var mid = visB > visA ? (visA + visB) / 2 : (xa + xb) / 2;
+    mid = Math.min(Math.max(mid, CH.padL + 34), CH.W - CH.padR - 34);
+    q.txt.setAttribute('x', mid.toFixed(1));
+  });
+
+  paintRange();
+}
+
+function showCross(px){
+  var s = CH.s, v = CH.view;
+  var i = Math.round(v.lo + ((px - CH.padL) / CH.plotW) * (v.hi - v.lo));
+  i = Math.max(Math.max(s.o, Math.ceil(v.lo)), Math.min(Math.min(CH.n - 1, Math.floor(v.hi)), i));
+  var val = s.p[i - s.o];
+  if (val === undefined) return;
+  var X = cx(i);
+  CH.cross.setAttribute('x1', X); CH.cross.setAttribute('x2', X);
+  CH.cross.setAttribute('opacity', '.28');
+  CH.cdot.setAttribute('cx', X); CH.cdot.setAttribute('cy', CH.y(val));
+  CH.cdot.setAttribute('opacity', '1');
+  CH.tip.innerHTML = '<span class="d">' + shortDate(S.dates[i]) + '</span> &nbsp;'
+    + '<span class="v">' + (val * 100).toFixed(1) + '</span>';
+  CH.tip.style.opacity = '1';
+  var box = CH.svg.getBoundingClientRect(), scale = box.width / CH.W;
+  var tx = X * scale, tw = CH.tip.offsetWidth;
+  CH.tip.style.left = Math.max(4, Math.min(box.width - tw - 4, tx - tw / 2)) + 'px';
+  CH.tip.style.top = '0px';
+}
+
+function hideCross(){
+  CH.cross.setAttribute('opacity', '0');
+  CH.cdot.setAttribute('opacity', '0');
+  CH.tip.style.opacity = '0';
+}
+
+/* Pointer handling is the value readout only -- the range buttons own the time
+   axis. touch-action:pan-y (set on .chart) lets a horizontal scrub reach us
+   while a vertical swipe still scrolls the page. */
+function attachCrosshair(){
+  var host = CH.host;
+  function at(ev){
+    var box = CH.svg.getBoundingClientRect();
+    showCross((ev.clientX - box.left) * (CH.W / box.width));
+  }
+  host.addEventListener('pointerdown', at);
+  host.addEventListener('pointermove', at);
+  host.addEventListener('pointerup', hideCross);
+  host.addEventListener('pointercancel', hideCross);
+  host.addEventListener('pointerleave', hideCross);
 }
 
 var redrawTimer;
@@ -777,7 +1010,7 @@ window.addEventListener('resize', function(){
   if ($('#ticker').hidden) return;
   clearTimeout(redrawTimer);
   redrawTimer = setTimeout(function(){
-    var t = $('.tv-tk'); if (t) drawChart(byTicker[t.textContent]);
+    var t = $('.tv-tk'); if (t) drawChart(byTicker[t.textContent], true);
   }, 120);
 });
 

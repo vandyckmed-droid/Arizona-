@@ -186,6 +186,28 @@ point: +20.9% over 12 months, −21.9% over 6. It is the quickest way to see
 why something ranks where it does -- IBIT shows a -42% 12-1 window with a sharp
 rebound sitting entirely inside the skipped zone.
 
+A **Range** row under the chart switches the time axis between **12M / 6M / 3M**
+in one tap, always anchored on the most recent session. They are labelled in
+months so they never read as the 12-1 / 9-1 / 6-1 momentum windows the rails
+show — same numbers, different meaning.
+
+12M is the full shipped series. `build.py` sends exactly the 12-1 window plus
+the one extra session its indexing needs, so the widest view starts precisely
+at the rebase point and the line opens at 100 on the left edge; nothing is
+shipped that the UI cannot display.
+
+The range is a window over the session index, so the bands, rails, window dots
+and crosshair all ride the same mapping and stay pinned to their data points.
+The y-axis rescales to the visible window, so a shorter range opens up rather
+than flattening against the 12M axis. The SVG is built once and only its
+geometry attributes are rewritten when the range changes, and the chart's
+spoken description is rewritten with them so it always names the dates on
+screen.
+
+Dragging on the chart reads values off it, as before. The container keeps
+`touch-action: pan-y`, so a horizontal scrub reaches the page while a vertical
+swipe still scrolls normally.
+
 The watchlist lives in `localStorage`: per-viewer, private to that browser,
 never transmitted. It survives reloads and republishes, and it is deliberately
 not shared state -- a watchlist is one person's, and the page has no business
