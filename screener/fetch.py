@@ -30,6 +30,8 @@ def main():
     print(f"fetching {len(tickers)} tickers from FMP ({start} .. {end})")
     results = fmp.fetch_all(tickers, start, end)
     names = fmp.names(tickers)
+    print("fetching composition (sector / country weights)")
+    comps = fmp.fetch_all_composition(tickers)
 
     prices, problems = {}, []
     for ticker, rows, err in results:
@@ -56,6 +58,7 @@ def main():
                 "start": start,
                 "end": end,
                 "names": names,
+                "composition": comps,
                 "prices": prices,
                 "problems": problems,
             },

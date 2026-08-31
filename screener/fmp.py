@@ -75,6 +75,53 @@ def names(tickers):
     return out
 
 
+def composition(ticker):
+    """Lightweight composition: sector and country weights, largest first.
+
+    FMP's top-holdings endpoints (etf/holdings, etf/asset-exposure) are not
+    available on this key -- they return "Restricted Endpoint". Sector and
+    country weightings are, and they answer most of the same question for an
+    equity fund. Commodity, bond and currency products report a single
+    "Cash & Others 100%" bucket, which carries no information; those come back
+    empty rather than pretending otherwise.
+    """
+    def clean(rows, key):
+        out = []
+        for r in rows or []:
+            label = r.get(key)
+            w = r.get("weightPercentage")
+            if isinstance(w, str):
+                w = w.rstrip("%")
+            try:
+                w = float(w)
+            except (TypeError, ValueError):
+                continue
+            # "Cash & Others" / "Other" are placeholders, not information, and a
+            # weight above 100 is impossible (FMP reports 109.31% US for AMLP).
+            if not label or label in ("Cash & Others", "Other", "N/A"):
+                continue
+            if w <= 0.05 or w > 100:
+                continue
+            out.append({"label": label, "weight": round(w, 2)})
+        out.sort(key=lambda x: -x["weight"])
+        return out
+
+    try:
+        sectors = clean(_get("etf/sector-weightings", symbol=ticker), "sector")
+    except Exception:
+        sectors = []
+    try:
+        countries = clean(_get("etf/country-weightings", symbol=ticker), "country")
+    except Exception:
+        countries = []
+    return {"sectors": sectors[:8], "countries": countries[:6]}
+
+
+def fetch_all_composition(tickers, workers=8):
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return dict(zip(tickers, pool.map(composition, tickers)))
+
+
 def fetch_all(tickers, start, end, workers=8):
     """Pull every ticker's history concurrently. Failures come back as []."""
     def one(t):

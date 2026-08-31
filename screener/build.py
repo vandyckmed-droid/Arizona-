@@ -106,6 +106,7 @@ def average_linkage(corr, threshold):
 def main():
     raw = load()
     prices, names = raw["prices"], raw["names"]
+    comps = raw.get("composition", {})
     meta_by_ticker = {r["ticker"]: r for r in universe.as_dicts()}
 
     reference = prices["SPY"]["dates"]      # SPY is the trading calendar
@@ -150,12 +151,24 @@ def main():
             excluded.append({"ticker": ticker, "reason": "zero realized volatility in window"})
             continue
         m = meta_by_ticker[ticker]
+        comp = comps.get(ticker) or {}
+        # FMP's sector weightings are only trustworthy for funds that actually
+        # hold equities. On a bond or futures product it returns confident
+        # nonsense -- DBA (agriculture futures) comes back 16.8% Healthcare,
+        # HYG (broad high yield) comes back 99.6% Utilities. Country weights
+        # survive on bond funds, where they are genuinely informative, and are
+        # simply empty on commodity and crypto products.
+        equity_look_through = m["category"] in ("U.S. Equity", "International Equity")
         rows.append({
             "ticker": ticker,
-            "name": names.get(ticker, ticker),
+            "name": m["name"],                       # short, curated label
+            "legal_name": names.get(ticker, ticker), # what FMP calls it
+            "group": m["group"],
             "category": m["category"],
-            "exposure": m["exposure"],
+            "bet": m["bet"],
             "structure": m["structure"],
+            "sectors": (comp.get("sectors") or []) if equity_look_through else [],
+            "countries": comp.get("countries") or [],
             "sessions": len(closes),
             "dollar_volume": round(k["dollar_volume"]),
             "m": {w: {"ret": v[0], "vol": v[1], "score": v[2]} for w, v in stats.items()},
@@ -260,9 +273,10 @@ def main():
             "p": [round(px / base, 4) for _, px in pts],
         }
 
-    mix = {}
+    mix, group_mix = {}, {}
     for r in rows:
         mix[r["category"]] = mix.get(r["category"], 0) + 1
+        group_mix[r["group"]] = group_mix.get(r["group"], 0) + 1
 
     payload = {
         "meta": {
@@ -288,6 +302,8 @@ def main():
             "duplicate_threshold": DUPLICATE_CORR,
             "min_dollar_volume": MIN_DOLLAR_VOLUME,
             "category_mix": mix,
+            "group_mix": group_mix,
+            "groups": universe.GROUPS,
             "excluded_count": len(excluded),
             "excluded": sorted(excluded, key=lambda e: e["ticker"]),
         },
