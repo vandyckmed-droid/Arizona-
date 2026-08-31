@@ -250,6 +250,7 @@ def main():
             "duplicate_threshold": DUPLICATE_CORR,
             "min_dollar_volume": MIN_DOLLAR_VOLUME,
             "category_mix": mix,
+            "excluded_count": len(excluded),
             "excluded": sorted(excluded, key=lambda e: e["ticker"]),
         },
         "rows": rows,

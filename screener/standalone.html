@@ -1,0 +1,359 @@
+<title>Cross-Asset Momentum Screen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#f2f5f6; --card:#fff; --sunk:#e9eef0;
+    --ink:#10161c; --mid:#48575f; --muted:#77878f; --line:#dbe3e6;
+    --pos:#0f766e; --neg:#b4451f; --flat:#77878f;
+    --c-use:#3f6f8f; --c-intl:#5a7f5e; --c-rates:#8a6a3d; --c-credit:#7a5f86; --c-cmdty:#a06a45; --c-crypto:#4a6aa8;
+    --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --disp:"Archivo","IBM Plex Sans",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0d1215; --card:#161d21; --sunk:#1d262a;
+      --ink:#e7edef; --mid:#a9b7bd; --muted:#7f8f97; --line:#252f34;
+      --pos:#4bbfa8; --neg:#e08159; --flat:#7f8f97;
+      --c-use:#7aa8c8; --c-intl:#8fbb92; --c-rates:#c4a271; --c-credit:#b294bd; --c-cmdty:#d29c76; --c-crypto:#8aa4dc;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1215; --card:#161d21; --sunk:#1d262a;
+    --ink:#e7edef; --mid:#a9b7bd; --muted:#7f8f97; --line:#252f34;
+    --pos:#4bbfa8; --neg:#e08159; --flat:#7f8f97;
+    --c-use:#7aa8c8; --c-intl:#8fbb92; --c-rates:#c4a271; --c-credit:#b294bd; --c-cmdty:#d29c76; --c-crypto:#8aa4dc;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:15px;line-height:1.45;-webkit-text-size-adjust:100%}
+  .wrap{max-width:780px;margin:0 auto;padding:0 14px calc(32px + env(safe-area-inset-bottom))}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  :focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+  /* ---- masthead ---- */
+  header{padding:26px 0 14px;border-bottom:1.5px solid var(--ink)}
+  .eyebrow{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+    font-weight:500;margin-bottom:7px}
+  h1{margin:0;font-family:var(--disp);font-size:26px;font-weight:700;letter-spacing:-.022em;
+    line-height:1.1;text-wrap:balance}
+  .asof{margin-top:6px;font-size:12.5px;color:var(--mid)}
+  .asof b{font-family:var(--mono);font-weight:500;color:var(--ink)}
+
+  .tally{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:16px}
+  .tally div{background:var(--card);padding:9px 8px}
+  .tally .v{font-family:var(--mono);font-size:19px;font-weight:600;line-height:1.15;letter-spacing:-.02em}
+  .tally .k{font-size:9.5px;white-space:nowrap;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-top:3px}
+
+  .caveat{margin-top:12px;padding:10px 12px;background:var(--sunk);border-radius:8px;
+    font-size:12px;line-height:1.5;color:var(--mid)}
+  .caveat b{color:var(--ink);font-weight:600}
+
+  /* ---- tabs ---- */
+  .tabs{display:flex;gap:2px;margin:18px 0 0;background:var(--sunk);padding:3px;border-radius:9px}
+  .tab{flex:1;padding:8px 6px;border:0;background:none;color:var(--mid);border-radius:7px;
+    font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer}
+  .tab[aria-selected="true"]{background:var(--card);color:var(--ink);font-weight:600;
+    box-shadow:0 1px 2px rgba(0,0,0,.09)}
+
+  /* ---- filters ---- */
+  .controls{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 8px}
+  input[type="search"]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;
+    background:var(--card);color:var(--ink);font-family:var(--sans);font-size:16px;-webkit-appearance:none}
+  input[type="search"]::placeholder{color:var(--muted)}
+  .chips{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:5px 11px;
+    border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--mid);
+    font-family:var(--sans);font-size:12px;cursor:pointer;white-space:nowrap}
+  .chip .n{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:500}
+  .chip[aria-pressed="true"] .n{color:var(--bg);opacity:.65}
+  .swatch{width:7px;height:7px;border-radius:2px;flex:0 0 auto}
+
+  /* ---- rows ---- */
+  ol{list-style:none;margin:0;padding:0}
+  li.row{background:var(--card);border:1px solid var(--line);border-radius:9px;margin-bottom:5px;
+    overflow:hidden;position:relative}
+  li.row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--stripe)}
+  .head{display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:center;
+    padding:10px 12px 10px 13px;cursor:pointer;width:100%;border:0;background:none;
+    text-align:left;font:inherit;color:inherit}
+  .rank{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+  .id,.nums{min-width:0;display:block}
+  .tk{display:block;font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:-.012em}
+  .tk .short{display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--muted);
+    margin-left:6px;vertical-align:middle}
+  .nm{display:block;color:var(--mid);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+  .exp{display:block;color:var(--muted);font-size:10.5px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nums{text-align:right}
+  .blend,.parts{display:block}
+  .blend{font-family:var(--mono);font-size:16px;font-weight:600;letter-spacing:-.02em}
+  .parts{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:2px;white-space:nowrap}
+  .pos{color:var(--pos)} .neg{color:var(--neg)}
+
+  /* ---- detail ---- */
+  .detail{border-top:1px solid var(--line);padding:12px 13px;background:var(--sunk)}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:0 16px}
+  .kv{display:flex;justify-content:space-between;gap:8px;align-items:baseline;
+    padding:5px 0;border-bottom:1px solid var(--line);font-size:12px}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-family:var(--mono);font-size:12px;font-weight:500}
+  .lbl{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+    font-weight:500;margin:14px 0 6px}
+  .tags{display:flex;flex-wrap:wrap;gap:5px}
+  .tag{background:var(--card);border:1px solid var(--line);border-radius:5px;padding:3px 7px;
+    font-size:11.5px}
+  .tag b{font-family:var(--mono);font-weight:500;color:var(--mid);margin-left:3px}
+  .tag.self{border-color:var(--ink)}
+  .tag.self .t{font-weight:700}
+  .note{color:var(--mid);font-size:11.5px;line-height:1.5;margin-top:8px}
+
+  /* ---- groups ---- */
+  .intro{color:var(--mid);font-size:12.5px;line-height:1.55;padding:12px 0 14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:12px;margin-bottom:6px}
+  .card h3{margin:0;font-family:var(--disp);font-size:13px;font-weight:600;letter-spacing:-.01em;
+    display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .card h3 .rho{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--muted)}
+  .members{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+  .dupe{display:flex;justify-content:space-between;gap:10px;padding:6px 0;
+    border-bottom:1px solid var(--line);font-size:12.5px}
+  .dupe:last-child{border-bottom:0}
+  .dupe .p{font-family:var(--disp);font-weight:600}
+  .dupe .v{font-family:var(--mono);font-size:12px;color:var(--mid)}
+  .empty{color:var(--muted);text-align:center;padding:34px 0;font-size:13px}
+
+  footer{color:var(--muted);font-size:11px;line-height:1.65;padding:20px 0 0;
+    border-top:1px solid var(--line);margin-top:20px}
+  footer b{color:var(--mid);font-weight:500}
+  footer .mono{font-family:var(--mono)}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Vol-adjusted 12&ndash;1 / 6&ndash;1 momentum</div>
+    <h1>Cross-Asset Momentum</h1>
+    <div class="asof" id="asof"></div>
+    <div class="tally" id="tally"></div>
+    <div class="caveat" id="caveat"></div>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="t-rank" aria-selected="true" aria-controls="view-rank">Ranking</button>
+    <button class="tab" role="tab" id="t-group" aria-selected="false" aria-controls="view-group">Same-bet groups</button>
+  </div>
+
+  <section id="view-rank" role="tabpanel" aria-labelledby="t-rank">
+    <div class="controls">
+      <input type="search" id="q" placeholder="Search ticker, name or exposure" autocomplete="off" aria-label="Search">
+      <div class="chips" id="chips"></div>
+    </div>
+    <ol id="list"></ol>
+  </section>
+
+  <section id="view-group" role="tabpanel" aria-labelledby="t-group" hidden></section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script id="payload" type="application/json">/*__DATA__*/null</script>
+<script>
+(function(){
+"use strict";
+var DATA = JSON.parse(document.getElementById('payload').textContent);
+var $ = function(s){ return document.querySelector(s); };
+var HUE = {
+  'U.S. Equity':'var(--c-use)', 'International Equity':'var(--c-intl)', 'Rates':'var(--c-rates)',
+  'Credit':'var(--c-credit)', 'Commodity':'var(--c-cmdty)', 'Crypto':'var(--c-crypto)'
+};
+var cat = 'All', open = null;
+var M = DATA.meta, ROWS = DATA.rows;
+var byTicker = {}; ROWS.forEach(function(r){ byTicker[r.ticker] = r; });
+
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function pct(x){ return (x*100).toFixed(1) + '%'; }
+function sgn(x){ return (x >= 0 ? '+' : '&minus;') + Math.abs(x).toFixed(2); }
+function tone(x){ return x > 0.005 ? 'pos' : (x < -0.005 ? 'neg' : ''); }
+
+/* ---------- masthead ---------- */
+$('#asof').innerHTML = 'Through <b>' + esc(M.last_session) + '</b> &middot; '
+  + M.ranked + ' of ' + M.universe_size + ' instruments ranked';
+
+[['ranked', M.ranked], ['756d corr', M.correlation_eligible],
+ ['groups', DATA.clusters.length], ['dupe pairs', DATA.duplicates.length]]
+  .forEach(function(p){
+    var d = document.createElement('div');
+    d.innerHTML = '<div class="v">' + p[1] + '</div><div class="k">' + p[0] + '</div>';
+    $('#tally').appendChild(d);
+  });
+
+$('#caveat').innerHTML = '<b>Read the top four with care.</b> SGOV, BIL, SHV and FLOT '
+  + 'lead on realized vol near 0.01%/day, not on return &mdash; <span class="num">return &divide; vol</span> '
+  + 'explodes when the denominator collapses. The formula is working as specified; the ordering '
+  + 'below them barely changes if they are dropped.';
+
+/* ---------- filters ---------- */
+var cats = ['All'].concat(Object.keys(M.category_mix).sort(function(a,b){
+  return M.category_mix[b] - M.category_mix[a]; }));
+$('#chips').innerHTML = cats.map(function(c){
+  return '<button class="chip" data-c="' + esc(c) + '" aria-pressed="' + (c === 'All') + '">'
+    + (c === 'All' ? '' : '<span class="swatch" style="background:' + HUE[c] + '"></span>')
+    + esc(c) + (c === 'All' ? '' : '<span class="n">' + M.category_mix[c] + '</span>') + '</button>';
+}).join('');
+$('#chips').addEventListener('click', function(e){
+  var b = e.target.closest('.chip'); if (!b) return;
+  cat = b.dataset.c;
+  Array.prototype.forEach.call(document.querySelectorAll('.chip'), function(x){
+    x.setAttribute('aria-pressed', String(x === b)); });
+  render();
+});
+$('#q').addEventListener('input', render);
+
+/* ---------- tabs ---------- */
+function tab(showRank){
+  $('#t-rank').setAttribute('aria-selected', String(showRank));
+  $('#t-group').setAttribute('aria-selected', String(!showRank));
+  $('#view-rank').hidden = !showRank;
+  $('#view-group').hidden = showRank;
+  window.scrollTo(0, 0);
+}
+$('#t-rank').addEventListener('click', function(){ tab(true); });
+$('#t-group').addEventListener('click', function(){ tab(false); });
+
+/* ---------- ranking ---------- */
+function render(){
+  var q = $('#q').value.trim().toLowerCase();
+  var rows = ROWS.filter(function(r){
+    return (cat === 'All' || r.category === cat)
+      && (!q || r.ticker.toLowerCase().indexOf(q) > -1
+             || r.name.toLowerCase().indexOf(q) > -1
+             || r.exposure.toLowerCase().indexOf(q) > -1);
+  });
+  $('#list').innerHTML = rows.length
+    ? rows.map(row).join('')
+    : '<div class="empty">Nothing matches &ldquo;' + esc(q) + '&rdquo;.</div>';
+}
+
+function row(r){
+  return '<li class="row" style="--stripe:' + HUE[r.category] + '">'
+    + '<button class="head" data-t="' + r.ticker + '" aria-expanded="' + (open === r.ticker) + '">'
+      + '<span class="rank">' + r.rank + '</span>'
+      + '<span class="id">'
+        + '<span class="tk">' + r.ticker
+          + (r.corr_ok ? '' : '<span class="short" title="short history"></span>') + '</span>'
+        + '<span class="nm">' + esc(r.name) + '</span>'
+        + '<span class="exp">' + esc(r.category) + ' &middot; ' + esc(r.exposure) + '</span>'
+      + '</span>'
+      + '<span class="nums">'
+        + '<span class="blend ' + tone(r.blend) + '">' + sgn(r.blend) + '</span>'
+        + '<span class="parts">12&ndash;1 <span class="' + tone(r.z12) + '">' + sgn(r.z12) + '</span>'
+        + '&emsp; 6&ndash;1 <span class="' + tone(r.z6) + '">' + sgn(r.z6) + '</span></span>'
+      + '</span>'
+    + '</button>'
+    + (open === r.ticker ? detail(r) : '')
+  + '</li>';
+}
+
+function kv(k, v, c){
+  return '<div class="kv"><span class="k">' + k + '</span>'
+    + '<span class="v ' + (c || '') + '">' + v + '</span></div>';
+}
+
+function detail(r){
+  var peers;
+  if (r.corr_ok && r.peers.length){
+    peers = '<div class="lbl">Closest peers &middot; ' + M.correlation_sessions + '-session correlation</div>'
+      + '<div class="tags">' + r.peers.map(function(p){
+          return '<span class="tag"><span class="t">' + p.ticker + '</span><b>'
+            + p.corr.toFixed(2) + '</b></span>'; }).join('')
+      + '<span class="tag" style="opacity:.72">most negative: <span class="t">'
+        + r.opposite.ticker + '</span><b>' + r.opposite.corr.toFixed(2) + '</b></span></div>';
+  } else {
+    peers = '<div class="note">Only <span class="num">' + r.sessions + '</span> sessions of history. '
+      + 'Ranked, but outside the ' + M.correlation_sessions + '-session correlation matrix.</div>';
+  }
+
+  var grp = '';
+  if (r.cluster){
+    var c = DATA.clusters.filter(function(x){ return x.id === r.cluster; })[0];
+    grp = '<div class="lbl">Same-bet group</div><div class="tags">'
+      + c.members.map(function(m){
+          return '<span class="tag' + (m === r.ticker ? ' self' : '') + '"><span class="t">'
+            + m + '</span></span>'; }).join('')
+      + '</div><div class="note">avg &rho; <span class="num">' + c.avg_corr.toFixed(3)
+      + '</span> &middot; min &rho; <span class="num">' + c.min_corr.toFixed(3) + '</span></div>';
+  } else if (r.corr_ok){
+    grp = '<div class="note">No group at &rho; &ge; ' + M.cluster_threshold
+      + ' &mdash; this one stands alone.</div>';
+  }
+
+  return '<div class="detail"><div class="grid">'
+    + kv('12&ndash;1 return', pct(r.ret12), tone(r.ret12))
+    + kv('6&ndash;1 return', pct(r.ret6), tone(r.ret6))
+    + kv('12&ndash;1 daily vol', pct(r.vol12))
+    + kv('6&ndash;1 daily vol', pct(r.vol6))
+    + kv('12&ndash;1 score', r.score12.toFixed(2))
+    + kv('6&ndash;1 score', r.score6.toFixed(2))
+    + kv('structure', esc(r.structure))
+    + kv('sessions', r.sessions)
+    + '</div>' + peers + grp + '</div>';
+}
+
+$('#list').addEventListener('click', function(e){
+  var h = e.target.closest('.head'); if (!h) return;
+  open = (open === h.dataset.t) ? null : h.dataset.t;
+  render();
+});
+
+/* ---------- groups ---------- */
+$('#view-group').innerHTML =
+  '<div class="intro">Instruments whose average-linkage correlation holds at or above '
+    + '<span class="num">' + M.cluster_threshold + '</span> across '
+    + '<span class="num">' + M.correlation_returns + '</span> daily returns. '
+    + 'Pearson on raw returns, sign preserved, nothing residualized. '
+    + 'Nothing here is deleted or merged &mdash; the groups exist to be looked at.</div>'
+  + DATA.clusters.map(function(c){
+      return '<div class="card"><h3>' + c.size + ' instruments'
+        + '<span class="rho">avg &rho; ' + c.avg_corr.toFixed(3)
+        + ' &middot; min ' + c.min_corr.toFixed(3) + '</span></h3>'
+        + '<div class="members">' + c.members.map(function(t){
+            var r = byTicker[t];
+            return '<span class="tag" style="border-left:3px solid ' + HUE[r.category] + '">'
+              + '<span class="t">' + t + '</span><b>#' + r.rank + '</b></span>';
+          }).join('') + '</div></div>';
+    }).join('')
+  + '<div class="card"><h3>Near-duplicate pairs<span class="rho">&rho; &ge; '
+    + M.duplicate_threshold + ' &middot; ' + DATA.duplicates.length + ' pairs</span></h3>'
+    + '<div style="margin-top:8px">' + DATA.duplicates.map(function(d){
+        return '<div class="dupe"><span class="p">' + d.a + ' &nbsp;/&nbsp; ' + d.b
+          + '</span><span class="v">' + d.corr.toFixed(4) + '</span></div>';
+      }).join('') + '</div></div>';
+
+/* ---------- footer ---------- */
+$('#foot').innerHTML =
+  '<b>Momentum.</b> 12&ndash;1 is the return from ' + (M.min_rank_sessions - 1)
+  + ' sessions back to 21 sessions back, divided by the realized daily volatility of that same '
+  + 'window; 6&ndash;1 is the 126&rarr;21 equivalent. Both are z-scored across the ranked universe '
+  + 'and blended 50/50. Returns and vols are left un-annualized &mdash; the cross-sectional z-score '
+  + 'is scale-invariant. Every category ranks together; category is display metadata only.<br><br>'
+  + '<b>Correlation.</b> Pearson on <span class="num">' + M.correlation_returns
+  + '</span> raw daily returns spanning <span class="num">' + M.correlation_sessions
+  + '</span> aligned sessions (<span class="mono">' + esc(M.correlation_window[0]) + '</span> to '
+  + '<span class="mono">' + esc(M.correlation_window[1]) + '</span>). An instrument needs a price on '
+  + 'every one of those sessions to qualify; the window is never shortened to admit newer products. '
+  + 'A dot beside a ticker marks one that ranks but cannot be correlated.<br><br>'
+  + '<b>Prices.</b> ' + esc(M.price_source) + '. Total-return series, so distributions are not '
+  + 'penalised. Nothing imputed, nothing forward-filled. Instruments stale in FMP, or under a '
+  + '$' + (M.min_dollar_volume / 1e6).toFixed(0) + 'M median dollar-volume floor, are excluded '
+  + '(<span class="num">' + M.excluded_count + '</span>). Generated <span class="mono">'
+  + esc(M.generated_at) + '</span>. Not investment advice.';
+
+render();
+})();
+</script>
