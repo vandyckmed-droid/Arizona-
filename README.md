@@ -186,10 +186,14 @@ point: +20.9% over 12 months, −21.9% over 6. It is the quickest way to see
 why something ranks where it does -- IBIT shows a -42% 12-1 window with a sharp
 rebound sitting entirely inside the skipped zone.
 
-The chart zooms. Pinch with two fingers to scale the time axis (the pinch
-midpoint anchors the zoom and drags it, so zoom and pan are one motion); once
-zoomed, one finger pans and a Reset zoom pill appears. Double-tap or the pill
-returns to the full view, and a mouse wheel zooms on desktop. Zoom and pan live
+The chart zooms two ways. A **Range** row under it jumps to All / 12M / 6M / 3M
+in one tap — anchored on the most recent session, and labelled in months so it
+never reads as the 12-1 / 9-1 / 6-1 momentum windows the rails show. For
+anything in between, pinch to scale the time axis (the pinch midpoint anchors
+the zoom and drags it, so zoom and pan are one motion) and drag one finger to
+pan once zoomed. A gesture that lands off a preset simply clears the
+highlight; All, or a double-tap, returns to the full view, and a mouse wheel
+zooms on desktop. Zoom and pan live
 as a window over the session index, so the bands, rails, window dots and
 crosshair all ride the same transform; the y-axis rescales to whatever is on
 screen so zooming into a quiet stretch opens it up. The SVG is built once and

@@ -177,11 +177,12 @@
   .chart{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:10px 8px 8px;
     position:relative;touch-action:pan-y}
   .chart svg{display:block;width:100%}
-  .zreset{position:absolute;top:8px;right:8px;z-index:3;border:1px solid var(--line);
-    background:var(--card);color:var(--mid);border-radius:7px;padding:5px 10px;
-    font-family:var(--sans);font-size:11px;cursor:pointer;line-height:1;
-    box-shadow:0 1px 3px rgba(0,0,0,.14)}
-  .zreset:active{background:var(--sunk)}
+  .range{display:flex;align-items:center;gap:8px;margin-top:9px}
+  .range > span{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);font-weight:500}
+  .range .seg{flex:1}
+  .range .seg button{flex:1;font-family:var(--mono);font-size:11.5px;padding:6px 4px}
+  .range .seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
   .hint{font-size:10.5px;color:var(--muted);letter-spacing:0;text-transform:none;
     font-weight:400;white-space:nowrap}
 
@@ -596,8 +597,12 @@ function tickerView(r){
       + '<span id="watch-text">' + (on ? 'On watchlist' : 'Add to watchlist') + '</span></button>'
     + '<figure>'
       + '<figcaption>Price rebased to 100 at the 12&ndash;1 entry'
-        + '<span class="hint">pinch to zoom &middot; drag to pan</span></figcaption>'
+        + '<span class="hint">pinch or drag to explore</span></figcaption>'
       + '<div class="chart" id="chart"></div>'
+      + '<div class="range"><span>Range</span><div class="seg" id="seg-range">'
+        + RANGES.map(function(q){
+            return '<button data-r="' + q.k + '">' + q.label + '</button>'; }).join('')
+        + '</div></div>'
       + '<div class="legend">'
         + orderedWins().map(function(w){
             return '<span><i style="background:var(--band' + w + ')"></i>'
@@ -683,6 +688,17 @@ $('#ticker').addEventListener('click', function(e){
    like this feel sticky on a phone. */
 var CH = null;
 var MIN_SPAN = 20;   // never zoom past roughly a month of sessions on screen
+
+/* Chart display ranges, in completed sessions. These are the time axis only --
+   they are deliberately labelled in months so they never read as the 12-1 /
+   9-1 / 6-1 momentum windows, which the rails and the ranking use. `all` is
+   the whole shipped series, ~18 months. */
+var RANGES = [
+  {k: 'all', label: 'All', span: null},
+  {k: '12m', label: '12M', span: 252},
+  {k: '6m',  label: '6M',  span: 126},
+  {k: '3m',  label: '3M',  span: 63}
+];
 
 function drawChart(r, keepView){
   var host = $('#chart'); if (!host) return;
@@ -775,7 +791,7 @@ function drawChart(r, keepView){
 
   var rails = {};
   wins.forEach(function(w, row){
-    var ya = H - padB + 26 + row * 18;
+    var ya = H - padB + 32 + row * 18;   // clear of the date labels above
     var gr = svgEl('g', {});
     var bar = svgEl('line', {y1: ya, y2: ya, stroke: 'var(--muted)', 'stroke-width': 1});
     var capA = svgEl('line', {y1: ya - 3, y2: ya + 3, stroke: 'var(--muted)', 'stroke-width': 1});
@@ -790,12 +806,9 @@ function drawChart(r, keepView){
 
   host.innerHTML = '';
   host.appendChild(svg);
-  var reset = document.createElement('button');
-  reset.className = 'zreset'; reset.id = 'zreset'; reset.hidden = true;
-  reset.textContent = 'Reset zoom';
   var tip = document.createElement('div');
   tip.className = 'tip'; tip.id = 'tip';
-  host.appendChild(reset); host.appendChild(tip);
+  host.appendChild(tip);
   var skipLegend = $('#lg-skip');
   if (skipLegend) skipLegend.style.background =
     'repeating-linear-gradient(45deg,var(--hatch) 0 1px,transparent 1px 4px)';
@@ -806,13 +819,53 @@ function drawChart(r, keepView){
     wins: wins, svg: svg, path: path, bands: bands, dots: dots, rails: rails,
     line100: line100, lbl100: lbl100, lblHi: lblHi, lblLo: lblLo,
     dLoLbl: dLoLbl, dHiLbl: dHiLbl, cross: cross, cdot: cdot,
-    tip: tip, reset: reset, host: host,
+    tip: tip, host: host,
     view: keep || {lo: 0, hi: n - 1},
     y: null, frame: 0
   };
   clampView();
   applyView();
   attachGestures();
+  attachRange();
+}
+
+function setRange(key){
+  var q = RANGES.filter(function(x){ return x.k === key; })[0];
+  if (!q) return;
+  var n = CH.n;
+  CH.view = q.span === null
+    ? {lo: 0, hi: n - 1}
+    : {lo: n - 1 - q.span, hi: n - 1};   // presets anchor on the most recent session
+  clampView(); hideCross(); applyView();
+}
+
+/* Which preset the current view corresponds to, if any. A pinch or a pan
+   usually lands between presets, and then none is active. */
+function activeRange(){
+  var v = CH.view, n = CH.n, span = v.hi - v.lo;
+  if (Math.abs(span - (n - 1)) < 1.5) return 'all';
+  if (Math.abs(v.hi - (n - 1)) > 1.5) return null;   // not anchored to the latest session
+  for (var i = 0; i < RANGES.length; i++){
+    if (RANGES[i].span !== null && Math.abs(span - RANGES[i].span) < 1.5) return RANGES[i].k;
+  }
+  return null;
+}
+
+function paintRange(){
+  var act = activeRange();
+  var btns = document.querySelectorAll('#seg-range button');
+  for (var i = 0; i < btns.length; i++){
+    btns[i].setAttribute('aria-pressed', String(btns[i].dataset.r === act));
+  }
+}
+
+function attachRange(){
+  var seg = $('#seg-range'); if (!seg) return;
+  seg.addEventListener('click', function(ev){
+    var b = ev.target.closest('button'); if (!b) return;
+    setRange(b.dataset.r);
+  });
+  paintRange();
 }
 
 function clampView(){
@@ -892,13 +945,16 @@ function applyView(){
     q.bar.setAttribute('x1', xa.toFixed(1)); q.bar.setAttribute('x2', xb.toFixed(1));
     q.capA.setAttribute('x1', xa.toFixed(1)); q.capA.setAttribute('x2', xa.toFixed(1));
     q.capB.setAttribute('x1', xb.toFixed(1)); q.capB.setAttribute('x2', xb.toFixed(1));
-    /* keep the label with its rail, but pinned inside the frame when the span
-       runs off the edge, so a zoomed-in rail is still readable */
-    var mid = Math.min(Math.max((xa + xb) / 2, CH.padL + 34), CH.W - CH.padR - 34);
+    /* centre the label over the part of the rail that is actually on screen.
+       Zoomed in, a window usually starts off the left edge, and centring on the
+       true midpoint would jam the label into the corner under the date label. */
+    var visA = Math.max(xa, CH.padL), visB = Math.min(xb, CH.W - CH.padR);
+    var mid = visB > visA ? (visA + visB) / 2 : (xa + xb) / 2;
+    mid = Math.min(Math.max(mid, CH.padL + 34), CH.W - CH.padR - 34);
     q.txt.setAttribute('x', mid.toFixed(1));
   });
 
-  CH.reset.hidden = !isZoomed();
+  paintRange();
 }
 
 function scheduleView(){
@@ -938,12 +994,8 @@ function showCross(px){
   CH.tip.style.opacity = '1';
   var box = CH.svg.getBoundingClientRect(), scale = box.width / CH.W;
   var tx = X * scale, tw = CH.tip.offsetWidth;
-  var left = Math.max(4, Math.min(box.width - tw - 4, tx - tw / 2));
-  CH.tip.style.left = left + 'px';
-  /* the reset pill owns the top-right corner while zoomed; drop the readout a
-     row rather than letting the two stack on top of each other */
-  var pill = CH.reset.hidden ? 0 : CH.reset.offsetWidth + 18;
-  CH.tip.style.top = (pill && left + tw > box.width - pill) ? '36px' : '0px';
+  CH.tip.style.left = Math.max(4, Math.min(box.width - tw - 4, tx - tw / 2)) + 'px';
+  CH.tip.style.top = '0px';
 }
 
 function hideCross(){
@@ -1045,11 +1097,6 @@ function attachGestures(){
     scheduleView();
   }, {passive: false});
 
-  CH.reset.addEventListener('click', function(ev){
-    ev.stopPropagation();
-    CH.view = {lo: 0, hi: CH.n - 1};
-    hideCross(); applyView();
-  });
 }
 var redrawTimer;
 window.addEventListener('resize', function(){
