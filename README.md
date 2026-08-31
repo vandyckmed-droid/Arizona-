@@ -23,11 +23,14 @@ pip install numpy
 
 python3 screener/fetch.py     # ~15s, one request per ticker
 python3 screener/build.py     # ~2s, writes web/data.json
-python3 -m http.server -d web 8000
+python3 screener/artifact.py  # writes web/index.html, self-contained
 ```
 
-`web/data.json` is committed, so the UI runs without an API key. Re-running
-`fetch.py` then `build.py` refreshes it. `data/prices.json` is the raw cache and
+`web/index.html` is one ~915 KB file with the data inlined. Open it straight off
+disk or drop it on any static host -- it needs no server and makes no network
+call except the Google Fonts stylesheet. It is a generated bundle and is
+gitignored; `web/data.json` is committed, so one `artifact.py` run rebuilds the
+page without an API key. `data/prices.json` is the raw cache and
 is gitignored — `build.py` reads it and never calls the network, so the ranking
 and correlation work can be re-run offline.
 
@@ -72,6 +75,13 @@ annualizing would change nothing. The two scores are z-scored separately across
 the ranked universe, blended 50/50, and sorted. All categories rank together;
 category is display metadata only.
 
+**The chart series** is the last 378 sessions per instrument (~18 months: the
+253-session 12-1 window plus lead-in), rebased to 1.0 at the 12-1 entry price so
+the 12-1 return reads straight off the y-axis. Every series aligns to the same
+reference calendar, so the dates are stored once and a short history is placed
+by its offset -- never padded or filled. The returns the chart draws reproduce
+the ranking's own numbers exactly.
+
 **Correlation eligibility** is separate and stricter: an instrument needs a price
 on every one of the last 756 reference sessions. The window is never shortened
 to admit newer products. Instruments that can be ranked but not correlated stay
@@ -82,6 +92,31 @@ aligned sessions. Signed, un-residualized, no benchmark, no factor model, no R²
 Grouping is average-linkage (UPGMA) agglomerative clustering cut at ρ ≥ 0.90;
 pairs at ρ ≥ 0.98 are additionally listed as near-duplicates. Nothing is deleted
 or consolidated — the groups exist to be looked at.
+
+## The UI
+
+The ranking is a list; tapping a row opens that instrument, tapping the star
+adds it to a watchlist.
+
+The per-ticker view draws the price line with both momentum windows shaded in
+place: the 12-1 window, the 6-1 window nested inside it, and the last 21
+sessions hatched to mark what both measures deliberately skip. Bracket rails
+under the plot label each window with its return. It is the quickest way to see
+why something ranks where it does -- IBIT shows a -42% 12-1 window with a sharp
+rebound sitting entirely inside the skipped zone.
+
+The watchlist lives in `localStorage`: per-viewer, private to that browser,
+never transmitted. It survives reloads and republishes, and it is deliberately
+not shared state -- a watchlist is one person's, and the page has no business
+publishing it. Reads and writes are wrapped, so blocked storage (private
+windows, browsers that refuse site data) degrades to a working session that
+simply does not remember.
+
+Category is shown as text on every row and drives the filter chips. An earlier
+draft also colour-coded it with a six-hue stripe; that palette failed
+colour-vision and normal-vision separation on the all-pairs test, and since the
+category is already named in words the stripe was carrying no information, so it
+was dropped rather than re-stepped.
 
 ## What the current run produced
 

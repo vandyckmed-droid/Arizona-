@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 # Regenerable FMP cache (~7 MB). Run screener/fetch.py to rebuild it.
 data/prices.json
+web/index.html

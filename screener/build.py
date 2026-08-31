@@ -31,6 +31,9 @@ CLUSTER_CORR = 0.90  # average-linkage cut: "these are broadly the same bet"
 DUPLICATE_CORR = 0.98  # pairwise: "these are near-interchangeable"
 PEERS = 5
 
+# --- price series shipped to the UI ----------------------------------------
+SERIES_SESSIONS = 378   # ~18 months: the 253-session 12-1 window plus lead-in
+
 # --- liquidity floor --------------------------------------------------------
 LIQ_SESSIONS = 60
 MIN_DOLLAR_VOLUME = 1_000_000.0
@@ -229,6 +232,23 @@ def main():
         key=lambda d: -d["corr"],
     )
 
+    # ---------------------------------------------- price series for the chart
+    # Every series aligns to the reference calendar, so the dates are stored once
+    # and a short history is placed by its offset rather than padded.
+    series_dates = reference[-SERIES_SESSIONS:]
+    i_12 = SERIES_SESSIONS - 1 - LOOK_12
+    series = {}
+    for r in rows:
+        rec = kept[r["ticker"]]["rec"]
+        have = dict(zip(rec["dates"], rec["close"]))
+        pts = [(i, have[d]) for i, d in enumerate(series_dates) if d in have]
+        offset = pts[0][0]
+        base = have[series_dates[i_12]]
+        series[r["ticker"]] = {
+            "o": offset,
+            "p": [round(px / base, 4) for _, px in pts],
+        }
+
     mix = {}
     for r in rows:
         mix[r["category"]] = mix.get(r["category"], 0) + 1
@@ -252,6 +272,16 @@ def main():
             "category_mix": mix,
             "excluded_count": len(excluded),
             "excluded": sorted(excluded, key=lambda e: e["ticker"]),
+        },
+        "series": {
+            "dates": series_dates,
+            "anchors": {
+                "start12": i_12,
+                "start6": SERIES_SESSIONS - 1 - LOOK_6,
+                "end": SERIES_SESSIONS - 1 - LAG,
+                "last": SERIES_SESSIONS - 1,
+            },
+            "data": series,
         },
         "rows": rows,
         "clusters": sorted(cluster_out, key=lambda c: (-c["size"], c["label"])),

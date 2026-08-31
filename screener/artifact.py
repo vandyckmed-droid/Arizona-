@@ -9,7 +9,7 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMPLATE = os.path.join(ROOT, "screener", "standalone.html")
+TEMPLATE = os.path.join(ROOT, "screener", "app.html")
 DATA = os.path.join(ROOT, "web", "data.json")
 
 
@@ -27,4 +27,4 @@ def main(out):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "web", "standalone.html"))
+    main(sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "web", "index.html"))
