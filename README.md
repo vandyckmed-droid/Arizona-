@@ -4,16 +4,21 @@ A phone-first ranking sheet for a curated cross-asset ETF/ETP universe, plus a
 long-horizon correlation map that shows which of those instruments are really
 the same bet.
 
-Four files do the work: a hand-written universe, a thin FMP client, one build
-script, and one HTML page. There is no backend, no database and no framework.
+Five small files do the work: a hand-written universe, a thin FMP client, one
+build script, one HTML page, and a bundler. There is no backend, no database
+and no framework.
 
 ```
 screener/universe.py   the curated universe: ticker, category, exposure, structure
 screener/fmp.py        FMP client (dividend-adjusted daily EOD + quote names)
 screener/fetch.py      pulls the histories into data/prices.json
-screener/build.py      ranking + correlation -> web/data.json
-web/index.html         the phone UI (reads web/data.json, no build step)
+screener/build.py      ranking + correlation + chart series -> web/data.json
+screener/app.html      the phone UI (one file, no framework)
+screener/artifact.py   inlines data.json into app.html -> web/index.html
 ```
+
+`web/index.html` is generated, not hand-edited: change `screener/app.html` and
+re-run `artifact.py`.
 
 ## Running it
 
@@ -33,6 +38,12 @@ gitignored; `web/data.json` is committed, so one `artifact.py` run rebuilds the
 page without an API key. `data/prices.json` is the raw cache and
 is gitignored — `build.py` reads it and never calls the network, so the ranking
 and correlation work can be re-run offline.
+
+`build.py` is a pure function of the cached prices, down to the bytes: it writes
+no build timestamp, so re-running it on unchanged prices leaves `web/data.json`
+untouched and `git status` clean. That keeps a dirty working tree meaningful —
+it means the numbers moved. Freshness is reported by `prices_fetched_at` and
+`last_session`, which describe the data rather than the moment the script ran.
 
 ## Method
 

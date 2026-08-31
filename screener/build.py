@@ -4,7 +4,6 @@ Everything is deterministic: same prices in, same web/data.json out. No random
 seeds, no iteration to convergence, no fitted models.
 """
 
-import datetime as dt
 import json
 import os
 import sys
@@ -255,7 +254,10 @@ def main():
 
     payload = {
         "meta": {
-            "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            # No build timestamp on purpose: the build is a pure function of the
+            # cached prices, and a wall clock in here would dirty a tracked file on
+            # every run. Freshness is prices_fetched_at + last_session, both of
+            # which describe the data rather than the moment the script ran.
             "price_source": raw["source"],
             "prices_fetched_at": raw["fetched_at"],
             "last_session": last_session,

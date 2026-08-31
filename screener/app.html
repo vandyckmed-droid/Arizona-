@@ -622,9 +622,11 @@ $('#foot').innerHTML =
   + 'penalised. Nothing imputed, nothing forward-filled. Instruments stale in FMP, or under a '
   + '$' + (M.min_dollar_volume / 1e6).toFixed(0) + 'M median dollar-volume floor, are excluded '
   + '(<span class="num">' + M.excluded_count + '</span>). '
-  + '<b>Watchlist.</b> Stored in this browser only &mdash; it never leaves the device and is not '
-  + 'shared with anyone who opens this page. Generated <span class="mono">'
-  + esc(M.generated_at) + '</span>. Not investment advice.';
+  + 'Prices pulled from FMP <span class="mono">' + esc(M.prices_fetched_at) + '</span>; '
+  + 'the ranking is a pure function of that pull, so the same prices always give the same '
+  + 'page.<br><br>'
+  + '<b>Watchlist.</b> Stored in this browser only &mdash; it never leaves the device and is '
+  + 'not shared with anyone who opens this page. Not investment advice.';
 
 syncChips();
 })();
