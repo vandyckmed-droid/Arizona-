@@ -199,8 +199,10 @@ shipped that the UI cannot display.
 The range is a window over the session index, so the bands, rails, window dots
 and crosshair all ride the same mapping and stay pinned to their data points.
 The y-axis rescales to the visible window, so a shorter range opens up rather
-than flattening against the full-range axis. The SVG is built once and only its
-geometry attributes are rewritten when the range changes.
+than flattening against the 12M axis. The SVG is built once and only its
+geometry attributes are rewritten when the range changes, and the chart's
+spoken description is rewritten with them so it always names the dates on
+screen.
 
 Dragging on the chart reads values off it, as before. The container keeps
 `touch-action: pan-y`, so a horizontal scrub reaches the page while a vertical

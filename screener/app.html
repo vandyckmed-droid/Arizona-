@@ -279,6 +279,11 @@ function sgn(x){ return (x >= 0 ? '+' : '&minus;') + Math.abs(x).toFixed(2); }
 function fx(x, dp){ var t = x.toFixed(dp === undefined ? 2 : dp);
   return t.charAt(0) === '-' ? '&minus;' + t.slice(1) : t; }
 function tone(x){ return x > 0.005 ? 'pos' : (x < -0.005 ? 'neg' : ''); }
+function longDate(iso){
+  var p = iso.split('-'), mo = ['January','February','March','April','May','June','July',
+    'August','September','October','November','December'];
+  return (+p[2]) + ' ' + mo[+p[1] - 1] + ' ' + p[0];
+}
 function shortDate(iso){
   var p = iso.split('-'), mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return mo[+p[1]-1] + ' ' + (+p[2]) + ' ' + p[0].slice(2);
@@ -599,9 +604,11 @@ function tickerView(r){
       + '<figcaption>Price rebased to 100 at the 12&ndash;1 entry'
         + '<span class="hint">drag for values</span></figcaption>'
       + '<div class="chart" id="chart"></div>'
-      + '<div class="range"><span>Range</span><div class="seg" id="seg-range">'
+      + '<div class="range"><span id="range-lbl">Range</span>'
+        + '<div class="seg" id="seg-range" role="group" aria-labelledby="range-lbl">'
         + RANGES.map(function(q){
-            return '<button data-r="' + q.k + '">' + q.label + '</button>'; }).join('')
+            return '<button data-r="' + q.k + '" aria-label="Show ' + q.months
+              + ' months">' + q.label + '</button>'; }).join('')
         + '</div></div>'
       + '<div class="legend">'
         + orderedWins().map(function(w){
@@ -679,13 +686,12 @@ $('#ticker').addEventListener('click', function(e){
 });
 
 /* ---------- the chart ----------
-   Zoom and pan live in index space: `view` is a window [lo, hi] over the
-   session index, and every mark is positioned through x(), so the bands,
-   rails, window dots and crosshair all ride the same transform for free.
+   The displayed range is a window [lo, hi] over the session index, and every
+   mark is positioned through x(), so the bands, rails, window dots and
+   crosshair all share one mapping and stay pinned to their data points.
 
-   The SVG is built once and only its geometry attributes are rewritten per
-   frame. Re-serialising the markup on every pointermove is what makes a chart
-   like this feel sticky on a phone. */
+   The SVG is built once; changing range rewrites geometry attributes rather
+   than re-serialising the markup. */
 var CH = null;
 
 /* Chart display ranges, in completed sessions -- the time axis only. Labelled
@@ -694,9 +700,9 @@ var CH = null;
    exactly the 12-1 window, so the widest view starts precisely at the rebase
    point and the line opens at 100 on the left edge. */
 var RANGES = [
-  {k: '12m', label: '12M', span: 252},
-  {k: '6m',  label: '6M',  span: 126},
-  {k: '3m',  label: '3M',  span: 63}
+  {k: '12m', label: '12M', months: 12, span: 252},
+  {k: '6m',  label: '6M',  months: 6,  span: 126},
+  {k: '3m',  label: '3M',  months: 3,  span: 63}
 ];
 var DEFAULT_RANGE = '12m';
 
@@ -726,12 +732,12 @@ function drawChart(r, keepView){
     return e;
   }
 
+  var baseLabel = r.ticker + ' price rebased to 100 at the 12 minus 1 window start. '
+    + wins.map(function(w){
+        return w + ' minus 1 return ' + (r.m[w].ret * 100).toFixed(1) + ' percent'; }).join(', ')
+    + '.';
   var svg = svgEl('svg', {
-    viewBox: '0 0 ' + W + ' ' + H, height: H, role: 'img',
-    'aria-label': r.ticker + ' price rebased to 100 at the 12 minus 1 window start. '
-      + wins.map(function(w){
-          return w + ' minus 1 return ' + (r.m[w].ret * 100).toFixed(1) + ' percent'; }).join(', ')
-      + '. Pinch to zoom the time axis, drag to pan.'
+    viewBox: '0 0 ' + W + ' ' + H, height: H, role: 'img', 'aria-label': baseLabel
   });
 
   var defs = svgEl('defs', {});
@@ -744,8 +750,9 @@ function drawChart(r, keepView){
   defs.appendChild(pat); defs.appendChild(clip);
   svg.appendChild(defs);
 
-  /* everything that moves under zoom lives in one clipped group, so panned
-     content never spills over the y-axis labels in the right margin */
+  /* everything positioned by range lives in one clipped group: at 6M and 3M
+     the bands and rails start off the left edge, and this keeps them from
+     spilling over the y-axis labels in the right margin */
   var g = svgEl('g', {'clip-path': 'url(#plotclip)'});
   svg.appendChild(g);
 
@@ -824,7 +831,7 @@ function drawChart(r, keepView){
     wins: wins, svg: svg, path: path, bands: bands, dots: dots, rails: rails,
     line100: line100, lbl100: lbl100, lblHi: lblHi, lblLo: lblLo,
     dLoLbl: dLoLbl, dHiLbl: dHiLbl, cross: cross, cdot: cdot,
-    tip: tip, host: host,
+    tip: tip, host: host, baseLabel: baseLabel,
     view: keep || {lo: n - 1 - spanOf(DEFAULT_RANGE), hi: n - 1},
     y: null, frame: 0
   };
@@ -880,8 +887,8 @@ function cx(i){ return CH.padL + ((i - CH.view.lo) / (CH.view.hi - CH.view.lo)) 
 function applyView(){
   var s = CH.s, v = CH.view, n = CH.n;
 
-  /* rescale y to what is actually on screen, so zooming into a quiet stretch
-     opens it up instead of showing a flat line against the full-range axis */
+  /* rescale y to what is actually on screen, so a shorter range opens up
+     instead of showing a flat line against the 12M axis */
   var iLo = Math.max(s.o, Math.floor(v.lo)), iHi = Math.min(n - 1, Math.ceil(v.hi));
   var dLo = Infinity, dHi = -Infinity;
   for (var i = iLo; i <= iHi; i++){
@@ -918,9 +925,9 @@ function applyView(){
     CH.dots[k].setAttribute('cy', y(s.p[idx - s.o]).toFixed(1));
   });
 
-  /* the rebase line only means anything while 100 is on screen; zooming into a
-     stretch that never trades near the entry price must not park it in the
-     margin under the date labels */
+  /* the rebase line only means anything while 100 is on screen. At 6M and 3M
+     the visible stretch often never trades near the entry price, and the line
+     must not then park itself in the margin under the date labels */
   var y100 = y(1), on100 = y100 >= CH.padT && y100 <= CH.padT + CH.plotH;
   CH.line100.setAttribute('opacity', on100 ? '.65' : '0');
   CH.lbl100.setAttribute('opacity', on100 ? '1' : '0');
@@ -932,8 +939,12 @@ function applyView(){
   CH.lblLo.setAttribute('y', (y(dLo) + 3.5).toFixed(1));
   CH.lblLo.textContent = (dLo * 100).toFixed(0);
 
-  CH.dLoLbl.textContent = shortDate(S.dates[Math.max(s.o, Math.round(v.lo))]);
-  CH.dHiLbl.textContent = shortDate(S.dates[Math.min(n - 1, Math.round(v.hi))]);
+  var iFrom = Math.max(s.o, Math.round(v.lo)), iTo = Math.min(n - 1, Math.round(v.hi));
+  CH.dLoLbl.textContent = shortDate(S.dates[iFrom]);
+  CH.dHiLbl.textContent = shortDate(S.dates[iTo]);
+  /* keep the spoken description in step with the range on screen */
+  CH.svg.setAttribute('aria-label', CH.baseLabel + ' Showing '
+    + longDate(S.dates[iFrom]) + ' to ' + longDate(S.dates[iTo]) + '.');
 
   CH.wins.forEach(function(w){
     var q = CH.rails[w], xa = cx(A['start' + w]), xb = cx(A.end);
@@ -941,8 +952,8 @@ function applyView(){
     q.capA.setAttribute('x1', xa.toFixed(1)); q.capA.setAttribute('x2', xa.toFixed(1));
     q.capB.setAttribute('x1', xb.toFixed(1)); q.capB.setAttribute('x2', xb.toFixed(1));
     /* centre the label over the part of the rail that is actually on screen.
-       Zoomed in, a window usually starts off the left edge, and centring on the
-       true midpoint would jam the label into the corner under the date label. */
+       At 6M and 3M a window starts off the left edge, and centring on the true
+       midpoint would jam the label into the corner under the date label. */
     var visA = Math.max(xa, CH.padL), visB = Math.min(xb, CH.W - CH.padR);
     var mid = visB > visA ? (visA + visB) / 2 : (xa + xb) / 2;
     mid = Math.min(Math.max(mid, CH.padL + 34), CH.W - CH.padR - 34);
@@ -978,10 +989,9 @@ function hideCross(){
   CH.tip.style.opacity = '0';
 }
 
-/* Pointer handling is just the value readout now: the presets own the time
-   axis, so there is no gesture state machine, no pinch maths and no
-   non-passive listeners. touch-action:pan-y stays so a horizontal scrub
-   reaches us while a vertical swipe still scrolls the page. */
+/* Pointer handling is the value readout only -- the range buttons own the time
+   axis. touch-action:pan-y (set on .chart) lets a horizontal scrub reach us
+   while a vertical swipe still scrolls the page. */
 function attachCrosshair(){
   var host = CH.host;
   function at(ev){
