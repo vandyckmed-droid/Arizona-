@@ -186,6 +186,21 @@ point: +20.9% over 12 months, −21.9% over 6. It is the quickest way to see
 why something ranks where it does -- IBIT shows a -42% 12-1 window with a sharp
 rebound sitting entirely inside the skipped zone.
 
+The chart zooms. Pinch with two fingers to scale the time axis (the pinch
+midpoint anchors the zoom and drags it, so zoom and pan are one motion); once
+zoomed, one finger pans and a Reset zoom pill appears. Double-tap or the pill
+returns to the full view, and a mouse wheel zooms on desktop. Zoom and pan live
+as a window over the session index, so the bands, rails, window dots and
+crosshair all ride the same transform; the y-axis rescales to whatever is on
+screen so zooming into a quiet stretch opens it up. The SVG is built once and
+only its geometry attributes are rewritten per frame, which is what keeps the
+gesture fluid.
+
+The container keeps `touch-action: pan-y`, so a vertical swipe starting on the
+chart still scrolls the page exactly as it does elsewhere; only two-finger
+gestures call `preventDefault`, and only to stop the browser scrolling or
+page-zooming mid-pinch.
+
 The watchlist lives in `localStorage`: per-viewer, private to that browser,
 never transmitted. It survives reloads and republishes, and it is deliberately
 not shared state -- a watchlist is one person's, and the page has no business

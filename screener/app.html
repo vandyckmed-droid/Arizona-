@@ -172,10 +172,19 @@
 
   figure{margin:18px 0 0}
   figcaption{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
-    font-weight:500;margin-bottom:8px}
+    font-weight:500;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:2px 12px;
+    justify-content:space-between;align-items:baseline}
   .chart{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:10px 8px 8px;
     position:relative;touch-action:pan-y}
   .chart svg{display:block;width:100%}
+  .zreset{position:absolute;top:8px;right:8px;z-index:3;border:1px solid var(--line);
+    background:var(--card);color:var(--mid);border-radius:7px;padding:5px 10px;
+    font-family:var(--sans);font-size:11px;cursor:pointer;line-height:1;
+    box-shadow:0 1px 3px rgba(0,0,0,.14)}
+  .zreset:active{background:var(--sunk)}
+  .hint{font-size:10.5px;color:var(--muted);letter-spacing:0;text-transform:none;
+    font-weight:400;white-space:nowrap}
+
   .tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);
     border-radius:6px;padding:5px 8px;font-size:11px;white-space:nowrap;opacity:0;
     transition:opacity .1s;z-index:2}
@@ -586,7 +595,8 @@ function tickerView(r){
       + ' style="--fill:' + (on ? 'currentColor' : 'none') + '">' + STAR
       + '<span id="watch-text">' + (on ? 'On watchlist' : 'Add to watchlist') + '</span></button>'
     + '<figure>'
-      + '<figcaption>Price rebased to 100 at the 12&ndash;1 entry</figcaption>'
+      + '<figcaption>Price rebased to 100 at the 12&ndash;1 entry'
+        + '<span class="hint">pinch to zoom &middot; drag to pan</span></figcaption>'
       + '<div class="chart" id="chart"></div>'
       + '<div class="legend">'
         + orderedWins().map(function(w){
@@ -663,121 +673,390 @@ $('#ticker').addEventListener('click', function(e){
   if (g) showTicker(g.dataset.go);
 });
 
-/* ---------- the chart ---------- */
-function drawChart(r){
+/* ---------- the chart ----------
+   Zoom and pan live in index space: `view` is a window [lo, hi] over the
+   session index, and every mark is positioned through x(), so the bands,
+   rails, window dots and crosshair all ride the same transform for free.
+
+   The SVG is built once and only its geometry attributes are rewritten per
+   frame. Re-serialising the markup on every pointermove is what makes a chart
+   like this feel sticky on a phone. */
+var CH = null;
+var MIN_SPAN = 20;   // never zoom past roughly a month of sessions on screen
+
+function drawChart(r, keepView){
   var host = $('#chart'); if (!host) return;
   var s = S.data[r.ticker];
-  var W = host.clientWidth, H = 264;
+  /* clientWidth includes the host's padding, so using it as the viewBox width
+     made the SVG letterbox itself and render ~4% small. Measure the content box
+     so one viewBox unit is exactly one CSS pixel -- the pointer maths below
+     depends on that. */
+  var cs = getComputedStyle(host);
+  var W = host.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  var H = 264;
   var padL = 6, padR = 36, padT = 14, padB = 80;
-  var n = S.dates.length;
-  var x = function(i){ return padL + (i / (n - 1)) * (W - padL - padR); };
+  var n = S.dates.length, plotW = W - padL - padR, plotH = H - padT - padB;
+  var wins = orderedWins();
+  var keep = keepView && CH && CH.ticker === r.ticker ? CH.view : null;
 
-  var dLo = Infinity, dHi = -Infinity;
-  s.p.forEach(function(v){ if (v < dLo) dLo = v; if (v > dHi) dHi = v; });
-  var pad = (dHi - dLo) * 0.10 || 0.02;
-  var lo = dLo - pad, hi = dHi + pad;   // plotting domain: padded so the line never touches the edge
-  var y = function(v){ return padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB); };
-
-  var d = s.p.map(function(v, k){
-    return (k ? 'L' : 'M') + x(s.o + k).toFixed(1) + ' ' + y(v).toFixed(1); }).join(' ');
-
-  function band(a, b, fill){
-    return '<rect x="' + x(a).toFixed(1) + '" y="' + padT + '" width="' + (x(b) - x(a)).toFixed(1)
-      + '" height="' + (H - padT - padB) + '" fill="' + fill + '"/>';
-  }
-  function dot(i){
-    var v = s.p[i - s.o];
-    return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1)
-      + '" r="4" fill="var(--accent)" stroke="var(--card)" stroke-width="2"/>';
-  }
-  function rail(a, b, row, label, ret){
-    var ya = H - padB + 26 + row * 18, xa = x(a), xb = x(b);
-    return '<g>'
-      + '<line x1="' + xa.toFixed(1) + '" y1="' + ya + '" x2="' + xb.toFixed(1) + '" y2="' + ya
-        + '" stroke="var(--muted)" stroke-width="1"/>'
-      + '<line x1="' + xa.toFixed(1) + '" y1="' + (ya-3) + '" x2="' + xa.toFixed(1) + '" y2="' + (ya+3)
-        + '" stroke="var(--muted)" stroke-width="1"/>'
-      + '<line x1="' + xb.toFixed(1) + '" y1="' + (ya-3) + '" x2="' + xb.toFixed(1) + '" y2="' + (ya+3)
-        + '" stroke="var(--muted)" stroke-width="1"/>'
-      + '<text x="' + ((xa+xb)/2).toFixed(1) + '" y="' + (ya - 5) + '" text-anchor="middle" '
-        + 'font-size="10" font-family="var(--mono)" fill="var(--mid)">' + label + ' ' + ret + '</text>'
-    + '</g>';
+  function svgEl(tag, attrs){
+    var e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
   }
 
-  var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" height="' + H + '" role="img" '
-    + 'aria-label="' + r.ticker + ' price rebased to 100 at the 12 minus 1 window start. '
-    + orderedWins().map(function(w){
-        return w + ' minus 1 return ' + (r.m[w].ret*100).toFixed(1) + ' percent'; }).join(', ')
-    + '.">'
-    + '<defs><pattern id="hatch" width="5" height="5" patternTransform="rotate(45)" '
-      + 'patternUnits="userSpaceOnUse">'
-      + '<line x1="0" y1="0" x2="0" y2="5" stroke="var(--hatch)" stroke-width="1.1"/></pattern></defs>'
-    /* every window ends at the same point, so the selected ones nest; painting
-       widest-first leaves each visible as its own tint */
-    + orderedWins().map(function(w){
-        return band(A['start' + w], A.end, 'var(--band' + w + ')'); }).join('')
-    + band(A.end, A.last, 'url(#hatch)')
-    /* the rebase line: everything above it is a gain over the 12-1 entry price */
-    + '<line x1="' + padL + '" y1="' + y(1).toFixed(1) + '" x2="' + (W - padR)
-      + '" y2="' + y(1).toFixed(1) + '" stroke="var(--muted)" stroke-width="1" '
-      + 'stroke-dasharray="2 3" opacity=".65"/>'
-    + '<text x="' + (W - padR + 4) + '" y="' + (y(1) + 3.5).toFixed(1) + '" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">100</text>'
-    + '<text x="' + (W - padR + 4) + '" y="' + (y(dHi) + 3.5).toFixed(1) + '" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">' + (dHi*100).toFixed(0) + '</text>'
-    + '<text x="' + (W - padR + 4) + '" y="' + (y(dLo) + 3.5).toFixed(1) + '" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">' + (dLo*100).toFixed(0) + '</text>'
-    + '<path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="2" '
-      + 'stroke-linejoin="round" stroke-linecap="round"/>'
-    + orderedWins().map(function(w){ return dot(A['start' + w]); }).join('') + dot(A.end)
-    + '<line class="cross" x1="0" y1="' + padT + '" x2="0" y2="' + (H - padB)
-      + '" stroke="var(--ink)" stroke-width="1" opacity="0"/>'
-    + '<circle class="cross-dot" r="3.5" fill="var(--accent)" stroke="var(--card)" '
-      + 'stroke-width="2" opacity="0"/>'
-    + '<text x="' + padL + '" y="' + (H - padB + 12) + '" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">' + shortDate(S.dates[s.o]) + '</text>'
-    + '<text x="' + (W - padR) + '" y="' + (H - padB + 12) + '" text-anchor="end" font-size="9.5" '
-      + 'font-family="var(--mono)" fill="var(--muted)">' + shortDate(S.dates[n-1]) + '</text>'
-    + orderedWins().map(function(w, i){
-        return rail(A['start' + w], A.end, i, WLBL[w], pct(r.m[w].ret)); }).join('')
-    + '</svg>';
+  var svg = svgEl('svg', {
+    viewBox: '0 0 ' + W + ' ' + H, height: H, role: 'img',
+    'aria-label': r.ticker + ' price rebased to 100 at the 12 minus 1 window start. '
+      + wins.map(function(w){
+          return w + ' minus 1 return ' + (r.m[w].ret * 100).toFixed(1) + ' percent'; }).join(', ')
+      + '. Pinch to zoom the time axis, drag to pan.'
+  });
 
-  host.innerHTML = svg + '<div class="tip" id="tip"></div>';
-  $('#lg-skip').style.background =
+  var defs = svgEl('defs', {});
+  var pat = svgEl('pattern', {id: 'hatch', width: 5, height: 5,
+    patternTransform: 'rotate(45)', patternUnits: 'userSpaceOnUse'});
+  pat.appendChild(svgEl('line', {x1: 0, y1: 0, x2: 0, y2: 5,
+    stroke: 'var(--hatch)', 'stroke-width': 1.1}));
+  var clip = svgEl('clipPath', {id: 'plotclip'});
+  clip.appendChild(svgEl('rect', {x: padL, y: 0, width: plotW, height: H}));
+  defs.appendChild(pat); defs.appendChild(clip);
+  svg.appendChild(defs);
+
+  /* everything that moves under zoom lives in one clipped group, so panned
+     content never spills over the y-axis labels in the right margin */
+  var g = svgEl('g', {'clip-path': 'url(#plotclip)'});
+  svg.appendChild(g);
+
+  var bands = {};
+  wins.forEach(function(w){                       // widest first: the nesting is the point
+    bands[w] = svgEl('rect', {y: padT, height: plotH, fill: 'var(--band' + w + ')'});
+    g.appendChild(bands[w]);
+  });
+  bands.skip = svgEl('rect', {y: padT, height: plotH, fill: 'url(#hatch)'});
+  g.appendChild(bands.skip);
+
+  /* the rebase line sits outside the clip: its x is fixed, only its y moves */
+  var line100 = svgEl('line', {x1: padL, x2: W - padR, stroke: 'var(--muted)',
+    'stroke-width': 1, 'stroke-dasharray': '2 3', opacity: '.65'});
+  svg.appendChild(line100);
+  function axisLabel(){
+    return svgEl('text', {x: W - padR + 4, 'font-size': 9.5,
+      'font-family': 'var(--mono)', fill: 'var(--muted)'});
+  }
+  var lbl100 = axisLabel(), lblHi = axisLabel(), lblLo = axisLabel();
+  lbl100.textContent = '100';
+  svg.appendChild(lbl100); svg.appendChild(lblHi); svg.appendChild(lblLo);
+
+  var path = svgEl('path', {fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2,
+    'stroke-linejoin': 'round', 'stroke-linecap': 'round'});
+  g.appendChild(path);
+
+  var dots = {};
+  wins.concat(['end']).forEach(function(k){
+    dots[k] = svgEl('circle', {r: 4, fill: 'var(--accent)',
+      stroke: 'var(--card)', 'stroke-width': 2});
+    g.appendChild(dots[k]);
+  });
+
+  var cross = svgEl('line', {y1: padT, y2: H - padB, stroke: 'var(--ink)',
+    'stroke-width': 1, opacity: 0});
+  var cdot = svgEl('circle', {r: 3.5, fill: 'var(--accent)', stroke: 'var(--card)',
+    'stroke-width': 2, opacity: 0});
+  g.appendChild(cross); g.appendChild(cdot);
+
+  function dateLabel(anchor){
+    return svgEl('text', {y: H - padB + 12, 'font-size': 9.5, 'text-anchor': anchor,
+      'font-family': 'var(--mono)', fill: 'var(--muted)'});
+  }
+  var dLoLbl = dateLabel('start'), dHiLbl = dateLabel('end');
+  dLoLbl.setAttribute('x', padL); dHiLbl.setAttribute('x', W - padR);
+  g.appendChild(dLoLbl); g.appendChild(dHiLbl);
+
+  var rails = {};
+  wins.forEach(function(w, row){
+    var ya = H - padB + 26 + row * 18;
+    var gr = svgEl('g', {});
+    var bar = svgEl('line', {y1: ya, y2: ya, stroke: 'var(--muted)', 'stroke-width': 1});
+    var capA = svgEl('line', {y1: ya - 3, y2: ya + 3, stroke: 'var(--muted)', 'stroke-width': 1});
+    var capB = svgEl('line', {y1: ya - 3, y2: ya + 3, stroke: 'var(--muted)', 'stroke-width': 1});
+    var txt = svgEl('text', {y: ya - 5, 'text-anchor': 'middle', 'font-size': 10,
+      'font-family': 'var(--mono)', fill: 'var(--mid)'});
+    txt.innerHTML = WLBL[w] + ' ' + pct(r.m[w].ret);
+    gr.appendChild(bar); gr.appendChild(capA); gr.appendChild(capB); gr.appendChild(txt);
+    g.appendChild(gr);
+    rails[w] = {bar: bar, capA: capA, capB: capB, txt: txt};
+  });
+
+  host.innerHTML = '';
+  host.appendChild(svg);
+  var reset = document.createElement('button');
+  reset.className = 'zreset'; reset.id = 'zreset'; reset.hidden = true;
+  reset.textContent = 'Reset zoom';
+  var tip = document.createElement('div');
+  tip.className = 'tip'; tip.id = 'tip';
+  host.appendChild(reset); host.appendChild(tip);
+  var skipLegend = $('#lg-skip');
+  if (skipLegend) skipLegend.style.background =
     'repeating-linear-gradient(45deg,var(--hatch) 0 1px,transparent 1px 4px)';
 
-  /* hover / touch crosshair */
-  var el = host.querySelector('svg'), tip = $('#tip');
-  var cross = el.querySelector('.cross'), cdot = el.querySelector('.cross-dot');
-  function move(ev){
-    var box = el.getBoundingClientRect();
-    var px = ((ev.touches ? ev.touches[0].clientX : ev.clientX) - box.left) * (W / box.width);
-    var i = Math.round(((px - padL) / (W - padL - padR)) * (n - 1));
-    i = Math.max(s.o, Math.min(n - 1, i));
-    var v = s.p[i - s.o];
-    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
-    cross.setAttribute('opacity', '.28');
-    cdot.setAttribute('cx', x(i)); cdot.setAttribute('cy', y(v)); cdot.setAttribute('opacity', '1');
-    tip.innerHTML = '<span class="d">' + shortDate(S.dates[i]) + '</span> &nbsp;'
-      + '<span class="v">' + (v*100).toFixed(1) + '</span>';
-    tip.style.opacity = '1';
-    var tx = x(i) * (box.width / W);
-    tip.style.left = Math.max(4, Math.min(box.width - tip.offsetWidth - 4, tx - tip.offsetWidth/2)) + 'px';
-    tip.style.top = '0px';
-  }
-  function leave(){ cross.setAttribute('opacity','0'); cdot.setAttribute('opacity','0'); tip.style.opacity='0'; }
-  host.addEventListener('pointermove', move);
-  host.addEventListener('pointerdown', move);
-  host.addEventListener('pointerleave', leave);
-  host.addEventListener('pointercancel', leave);
+  CH = {
+    ticker: r.ticker, r: r, s: s, n: n, W: W, H: H,
+    padL: padL, padR: padR, padT: padT, padB: padB, plotW: plotW, plotH: plotH,
+    wins: wins, svg: svg, path: path, bands: bands, dots: dots, rails: rails,
+    line100: line100, lbl100: lbl100, lblHi: lblHi, lblLo: lblLo,
+    dLoLbl: dLoLbl, dHiLbl: dHiLbl, cross: cross, cdot: cdot,
+    tip: tip, reset: reset, host: host,
+    view: keep || {lo: 0, hi: n - 1},
+    y: null, frame: 0
+  };
+  clampView();
+  applyView();
+  attachGestures();
 }
 
+function clampView(){
+  var v = CH.view, n = CH.n;
+  var span = Math.min(Math.max(v.hi - v.lo, MIN_SPAN), n - 1);
+  var mid = (v.lo + v.hi) / 2;
+  v.lo = mid - span / 2; v.hi = mid + span / 2;
+  if (v.lo < 0){ v.hi -= v.lo; v.lo = 0; }
+  if (v.hi > n - 1){ v.lo -= (v.hi - (n - 1)); v.hi = n - 1; }
+  if (v.lo < 0) v.lo = 0;
+}
+
+function isZoomed(){ return CH && (CH.view.hi - CH.view.lo) < CH.n - 1 - 0.5; }
+function cx(i){ return CH.padL + ((i - CH.view.lo) / (CH.view.hi - CH.view.lo)) * CH.plotW; }
+
+/* Rewrites geometry only -- no markup is re-serialised here. */
+function applyView(){
+  var s = CH.s, v = CH.view, n = CH.n;
+
+  /* rescale y to what is actually on screen, so zooming into a quiet stretch
+     opens it up instead of showing a flat line against the full-range axis */
+  var iLo = Math.max(s.o, Math.floor(v.lo)), iHi = Math.min(n - 1, Math.ceil(v.hi));
+  var dLo = Infinity, dHi = -Infinity;
+  for (var i = iLo; i <= iHi; i++){
+    var p = s.p[i - s.o];
+    if (p === undefined) continue;
+    if (p < dLo) dLo = p; if (p > dHi) dHi = p;
+  }
+  if (!isFinite(dLo)){ dLo = 1; dHi = 1; }
+  var pad = (dHi - dLo) * 0.10 || 0.02;
+  var lo = dLo - pad, hi = dHi + pad;
+  var y = CH.y = function(val){
+    return CH.padT + (1 - (val - lo) / (hi - lo)) * CH.plotH; };
+
+  /* only path the visible slice (plus a point either side so the line enters
+     and leaves the frame cleanly) */
+  var pLo = Math.max(s.o, Math.floor(v.lo) - 1), pHi = Math.min(n - 1, Math.ceil(v.hi) + 1);
+  var d = '';
+  for (var k = pLo; k <= pHi; k++){
+    d += (k === pLo ? 'M' : 'L') + cx(k).toFixed(1) + ' ' + y(s.p[k - s.o]).toFixed(1) + ' ';
+  }
+  CH.path.setAttribute('d', d);
+
+  function setBand(rect, a, b){
+    var xa = cx(a), xb = cx(b);
+    rect.setAttribute('x', xa.toFixed(1));
+    rect.setAttribute('width', Math.max(0, xb - xa).toFixed(1));
+  }
+  CH.wins.forEach(function(w){ setBand(CH.bands[w], A['start' + w], A.end); });
+  setBand(CH.bands.skip, A.end, A.last);
+
+  CH.wins.concat(['end']).forEach(function(k){
+    var idx = k === 'end' ? A.end : A['start' + k];
+    CH.dots[k].setAttribute('cx', cx(idx).toFixed(1));
+    CH.dots[k].setAttribute('cy', y(s.p[idx - s.o]).toFixed(1));
+  });
+
+  /* the rebase line only means anything while 100 is on screen; zooming into a
+     stretch that never trades near the entry price must not park it in the
+     margin under the date labels */
+  var y100 = y(1), on100 = y100 >= CH.padT && y100 <= CH.padT + CH.plotH;
+  CH.line100.setAttribute('opacity', on100 ? '.65' : '0');
+  CH.lbl100.setAttribute('opacity', on100 ? '1' : '0');
+  CH.line100.setAttribute('y1', y100.toFixed(1));
+  CH.line100.setAttribute('y2', y100.toFixed(1));
+  CH.lbl100.setAttribute('y', (y100 + 3.5).toFixed(1));
+  CH.lblHi.setAttribute('y', (y(dHi) + 3.5).toFixed(1));
+  CH.lblHi.textContent = (dHi * 100).toFixed(0);
+  CH.lblLo.setAttribute('y', (y(dLo) + 3.5).toFixed(1));
+  CH.lblLo.textContent = (dLo * 100).toFixed(0);
+
+  CH.dLoLbl.textContent = shortDate(S.dates[Math.max(s.o, Math.round(v.lo))]);
+  CH.dHiLbl.textContent = shortDate(S.dates[Math.min(n - 1, Math.round(v.hi))]);
+
+  CH.wins.forEach(function(w){
+    var q = CH.rails[w], xa = cx(A['start' + w]), xb = cx(A.end);
+    q.bar.setAttribute('x1', xa.toFixed(1)); q.bar.setAttribute('x2', xb.toFixed(1));
+    q.capA.setAttribute('x1', xa.toFixed(1)); q.capA.setAttribute('x2', xa.toFixed(1));
+    q.capB.setAttribute('x1', xb.toFixed(1)); q.capB.setAttribute('x2', xb.toFixed(1));
+    /* keep the label with its rail, but pinned inside the frame when the span
+       runs off the edge, so a zoomed-in rail is still readable */
+    var mid = Math.min(Math.max((xa + xb) / 2, CH.padL + 34), CH.W - CH.padR - 34);
+    q.txt.setAttribute('x', mid.toFixed(1));
+  });
+
+  CH.reset.hidden = !isZoomed();
+}
+
+function scheduleView(){
+  if (CH.frame) return;
+  CH.frame = requestAnimationFrame(function(){ CH.frame = 0; applyView(); });
+}
+
+function zoomAt(factor, anchorPx){
+  var v = CH.view;
+  var frac = Math.min(Math.max((anchorPx - CH.padL) / CH.plotW, 0), 1);
+  var anchorIdx = v.lo + frac * (v.hi - v.lo);
+  var span = Math.min(Math.max((v.hi - v.lo) / factor, MIN_SPAN), CH.n - 1);
+  v.lo = anchorIdx - frac * span;
+  v.hi = v.lo + span;
+  clampView();
+}
+
+function panBy(dxPx){
+  var v = CH.view, perPx = (v.hi - v.lo) / CH.plotW;
+  v.lo -= dxPx * perPx; v.hi -= dxPx * perPx;
+  clampView();
+}
+
+function showCross(px){
+  var s = CH.s, v = CH.view;
+  var i = Math.round(v.lo + ((px - CH.padL) / CH.plotW) * (v.hi - v.lo));
+  i = Math.max(Math.max(s.o, Math.ceil(v.lo)), Math.min(Math.min(CH.n - 1, Math.floor(v.hi)), i));
+  var val = s.p[i - s.o];
+  if (val === undefined) return;
+  var X = cx(i);
+  CH.cross.setAttribute('x1', X); CH.cross.setAttribute('x2', X);
+  CH.cross.setAttribute('opacity', '.28');
+  CH.cdot.setAttribute('cx', X); CH.cdot.setAttribute('cy', CH.y(val));
+  CH.cdot.setAttribute('opacity', '1');
+  CH.tip.innerHTML = '<span class="d">' + shortDate(S.dates[i]) + '</span> &nbsp;'
+    + '<span class="v">' + (val * 100).toFixed(1) + '</span>';
+  CH.tip.style.opacity = '1';
+  var box = CH.svg.getBoundingClientRect(), scale = box.width / CH.W;
+  var tx = X * scale, tw = CH.tip.offsetWidth;
+  var left = Math.max(4, Math.min(box.width - tw - 4, tx - tw / 2));
+  CH.tip.style.left = left + 'px';
+  /* the reset pill owns the top-right corner while zoomed; drop the readout a
+     row rather than letting the two stack on top of each other */
+  var pill = CH.reset.hidden ? 0 : CH.reset.offsetWidth + 18;
+  CH.tip.style.top = (pill && left + tw > box.width - pill) ? '36px' : '0px';
+}
+
+function hideCross(){
+  CH.cross.setAttribute('opacity', '0');
+  CH.cdot.setAttribute('opacity', '0');
+  CH.tip.style.opacity = '0';
+}
+
+function attachGestures(){
+  var host = CH.host, pts = new Map();
+  var pinch = null, panning = false, moved = 0, lastTap = 0;
+
+  function toLocal(ev){
+    var box = CH.svg.getBoundingClientRect();
+    return (ev.clientX - box.left) * (CH.W / box.width);
+  }
+
+  host.addEventListener('pointerdown', function(ev){
+    pts.set(ev.pointerId, {x: ev.clientX, local: toLocal(ev)});
+    if (pts.size === 1){
+      moved = 0; panning = false;
+      if (ev.pointerType !== 'touch') showCross(toLocal(ev));
+    } else if (pts.size === 2){
+      hideCross();
+      var a = Array.from(pts.values());
+      pinch = {spread: Math.abs(a[0].x - a[1].x) || 1,
+               span: CH.view.hi - CH.view.lo,
+               mid: (a[0].local + a[1].local) / 2};
+    }
+    try { host.setPointerCapture(ev.pointerId); } catch (e) {}
+  });
+
+  host.addEventListener('pointermove', function(ev){
+    var p = pts.get(ev.pointerId); if (!p) return;
+    var prevX = p.x;
+    p.x = ev.clientX; p.local = toLocal(ev);
+
+    if (pts.size >= 2 && pinch){
+      var a = Array.from(pts.values());
+      var spread = Math.abs(a[0].x - a[1].x) || 1;
+      var mid = (a[0].local + a[1].local) / 2;
+      /* zoom about the pinch midpoint, and let that midpoint drag the view too,
+         so two fingers zoom and pan in one continuous motion */
+      var span = Math.min(Math.max(pinch.span * (pinch.spread / spread), MIN_SPAN), CH.n - 1);
+      var frac = Math.min(Math.max((mid - CH.padL) / CH.plotW, 0), 1);
+      var anchorIdx = CH.view.lo + ((pinch.mid - CH.padL) / CH.plotW) * (CH.view.hi - CH.view.lo);
+      CH.view.lo = anchorIdx - frac * span;
+      CH.view.hi = CH.view.lo + span;
+      clampView();
+      pinch.spread = spread; pinch.span = CH.view.hi - CH.view.lo; pinch.mid = mid;
+      scheduleView();
+      return;
+    }
+
+    moved += Math.abs(ev.clientX - prevX);
+    if (isZoomed()){
+      /* one finger pans a zoomed chart; the crosshair would fight the drag, so
+         it stays hidden until the finger stops moving */
+      if (!panning && moved > 3){ panning = true; hideCross(); }
+      if (panning){
+        var box = CH.svg.getBoundingClientRect();
+        panBy((ev.clientX - prevX) * (CH.W / box.width));
+        scheduleView();
+        return;
+      }
+    }
+    showCross(toLocal(ev));
+  });
+
+  function release(ev){
+    var wasPanning = panning;
+    pts.delete(ev.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (pts.size === 0){
+      panning = false;
+      if (!wasPanning && moved < 4 && ev.type === 'pointerup'){
+        var now = Date.now();
+        if (now - lastTap < 320){ CH.view = {lo: 0, hi: CH.n - 1}; hideCross(); applyView(); }
+        else if (ev.pointerType === 'touch') showCross(toLocal(ev));
+        lastTap = now;
+      }
+    }
+  }
+  host.addEventListener('pointerup', release);
+  host.addEventListener('pointercancel', function(ev){ hideCross(); release(ev); });
+  host.addEventListener('pointerleave', function(ev){
+    if (ev.pointerType !== 'touch' && !pts.size) hideCross(); });
+
+  /* touch-action:pan-y lets the page scroll vertically off this element, but a
+     two-finger gesture must not scroll or page-zoom -- that needs a
+     non-passive listener */
+  host.addEventListener('touchmove', function(ev){
+    if (ev.touches.length >= 2) ev.preventDefault();
+  }, {passive: false});
+
+  host.addEventListener('wheel', function(ev){
+    ev.preventDefault();
+    zoomAt(ev.deltaY < 0 ? 1.18 : 1 / 1.18, toLocal(ev));
+    scheduleView();
+  }, {passive: false});
+
+  CH.reset.addEventListener('click', function(ev){
+    ev.stopPropagation();
+    CH.view = {lo: 0, hi: CH.n - 1};
+    hideCross(); applyView();
+  });
+}
 var redrawTimer;
 window.addEventListener('resize', function(){
   if ($('#ticker').hidden) return;
   clearTimeout(redrawTimer);
   redrawTimer = setTimeout(function(){
-    var t = $('.tv-tk'); if (t) drawChart(byTicker[t.textContent]);
+    var t = $('.tv-tk'); if (t) drawChart(byTicker[t.textContent], true);
   }, 120);
 });
 
